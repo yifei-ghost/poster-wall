@@ -6,39 +6,33 @@
     <title>Poster Wall</title>
     <style>
       :root { color-scheme: light dark; }
-      html, body { margin: 0; height: 100%; background: #0b0b0d; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+      html, body { margin: 0; height: 100%; background: #f3eee6; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
       canvas { display: block; }
       .hint {
         position: fixed;
-        left: 16px;
-        bottom: 16px;
+        left: 20px;
+        bottom: 20px;
         padding: 10px 14px;
-        background: rgba(20, 20, 24, 0.72);
-        color: #e9e9ec;
+        background: rgba(255, 255, 255, 0.6);
+        color: #2a241c;
         border-radius: 10px;
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.5;
         pointer-events: none;
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         max-width: 320px;
-      }
-      .hint kbd {
-        background: #2a2a30;
-        border-radius: 4px;
-        padding: 1px 6px;
-        font-size: 12px;
-        font-family: inherit;
+        border: 1px solid rgba(0,0,0,0.05);
       }
       .title {
         position: fixed;
-        left: 16px;
-        top: 16px;
-        color: #e9e9ec;
-        font-size: 14px;
-        letter-spacing: 0.08em;
+        left: 20px;
+        top: 20px;
+        color: #2a241c;
+        font-size: 11px;
+        letter-spacing: 0.22em;
         text-transform: uppercase;
-        opacity: 0.72;
+        opacity: 0.6;
         pointer-events: none;
       }
     </style>
@@ -46,9 +40,8 @@
   <body>
     <div class="title">Poster Wall</div>
     <div class="hint">
-      Click a rolled poster in the basket to hang it on the wall.<br />
-      Click the poster on the wall to roll it back up.<br />
-      Drag to orbit · scroll to zoom.
+      Click a rolled poster to hang it on the wall.<br />
+      Click the hanging poster to roll it back.
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>
