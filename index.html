@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Poster Wall</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { margin: 0; height: 100%; background: #0b0b0d; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+      canvas { display: block; }
+      .hint {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        padding: 10px 14px;
+        background: rgba(20, 20, 24, 0.72);
+        color: #e9e9ec;
+        border-radius: 10px;
+        font-size: 13px;
+        line-height: 1.5;
+        pointer-events: none;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        max-width: 320px;
+      }
+      .hint kbd {
+        background: #2a2a30;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-size: 12px;
+        font-family: inherit;
+      }
+      .title {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        color: #e9e9ec;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.72;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="title">Poster Wall</div>
+    <div class="hint">
+      Click a rolled poster in the basket to hang it on the wall.<br />
+      Click the poster on the wall to roll it back up.<br />
+      Drag to orbit · scroll to zoom.
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
