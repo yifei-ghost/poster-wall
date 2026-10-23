@@ -1,603 +1,630 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-// --- Scene ---------------------------------------------------------------
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf3eee6);
-
-// Camera: locked straight-on, slightly above floor, no orbit controls.
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 1.2, 12.0);
-camera.lookAt(0, 1.3, 0);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
-document.body.appendChild(renderer.domElement);
-
-// --- Dimensions ---------------------------------------------------------
-
-const WALL_W = 16;
-const WALL_H = 9;
-const WALL_Y = 1.6;
-
-const ALC_W = 2.6;
-const ALC_H_STRAIGHT = 3.0;
-const ALC_FLOOR_Y = -2.5;
-const ALC_CENTER_X = 0.0;
-
-// --- Lighting ------------------------------------------------------------
-
-scene.add(new THREE.AmbientLight(0xfff6ea, 0.55));
-
-const key = new THREE.DirectionalLight(0xffffff, 0.5);
-key.position.set(3, 6, 6);
-key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.left = -8;
-key.shadow.camera.right = 8;
-key.shadow.camera.top = 7;
-key.shadow.camera.bottom = -4;
-key.shadow.camera.near = 0.5;
-key.shadow.camera.far = 20;
-key.shadow.bias = -0.0003;
-key.shadow.normalBias = 0.02;
-scene.add(key);
-
-const alcoveLight = new THREE.PointLight(0xff6a2a, 14.0, 12, 1.8);
-alcoveLight.position.set(ALC_CENTER_X, 2.4, -1.2);
-scene.add(alcoveLight);
-
-const alcoveFill = new THREE.PointLight(0xffb382, 3.5, 6, 2.0);
-alcoveFill.position.set(ALC_CENTER_X, 0.0, -0.9);
-scene.add(alcoveFill);
-
-// --- Wall with arched alcove --------------------------------------------
-
-function buildWallWithAlcove() {
-  const halfW = WALL_W / 2;
-  const halfH = WALL_H / 2;
-  const shape = new THREE.Shape();
-  shape.moveTo(-halfW, -halfH);
-  shape.lineTo(halfW, -halfH);
-  shape.lineTo(halfW, halfH);
-  shape.lineTo(-halfW, halfH);
-  shape.lineTo(-halfW, -halfH);
-
-  // Alcove hole — rounded top arch
-  const localFloorY = ALC_FLOOR_Y - WALL_Y;             // relative to wall center
-  const localArchStartY = localFloorY + ALC_H_STRAIGHT;
-  const archCenterX = ALC_CENTER_X;
-  const archRadius = ALC_W / 2;
-
-  const hole = new THREE.Path();
-  hole.moveTo(archCenterX - archRadius, localFloorY);
-  hole.lineTo(archCenterX - archRadius, localArchStartY);
-  hole.absarc(archCenterX, localArchStartY, archRadius, Math.PI, 0, true);
-  hole.lineTo(archCenterX + archRadius, localFloorY);
-  hole.lineTo(archCenterX - archRadius, localFloorY);
-  shape.holes.push(hole);
-
-  // Extrude slightly so the alcove has visible depth
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.6,
-    bevelEnabled: false,
-    curveSegments: 48,
-  });
-  // The extrude goes +z; we want wall to be at z≈0 with the inside depth going into -z.
-  geo.translate(0, WALL_Y, -0.6);
-  return geo;
-}
-
-const wallGeo = buildWallWithAlcove();
-const wallMat = new THREE.MeshStandardMaterial({
-  color: 0xf4ece0,
-  roughness: 0.95,
-  metalness: 0.0,
-});
-const wall = new THREE.Mesh(wallGeo, wallMat);
-wall.castShadow = true;
-wall.receiveShadow = true;
-scene.add(wall);
-
-// Back wall of the alcove — sits deeper in -z
-const backWall = new THREE.Mesh(
-  new THREE.PlaneGeometry(14, 10),
-  new THREE.MeshStandardMaterial({ color: 0xf1e4d2, roughness: 0.95 }),
-);
-backWall.position.set(0, WALL_Y, -1.6);
-backWall.receiveShadow = true;
-scene.add(backWall);
-
-// Floor — pale wood plank
-function makeFloorTexture() {
-  const size = 1024;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#c8a97b';
-  ctx.fillRect(0, 0, size, size);
-  const plankH = 128;
-  for (let y = 0; y < size; y += plankH) {
-    const shade = Math.floor(Math.random() * 36) - 18;
-    ctx.fillStyle = `rgb(${200 + shade},${169 + shade * 0.8},${123 + shade * 0.5})`;
-    ctx.fillRect(0, y, size, plankH - 3);
-    for (let i = 0; i < 14; i++) {
-      ctx.strokeStyle = `rgba(90,55,20,${0.04 + Math.random() * 0.07})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      const yy = y + 4 + Math.random() * (plankH - 10);
-      ctx.moveTo(0, yy);
-      ctx.bezierCurveTo(
-        size * 0.3, yy + (Math.random() - 0.5) * 5,
-        size * 0.6, yy + (Math.random() - 0.5) * 5,
-        size, yy + (Math.random() - 0.5) * 5,
-      );
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#8d6a3e';
-    ctx.fillRect(0, y + plankH - 3, size, 3);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(3, 6);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
-  return t;
-}
-
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(22, 14),
-  new THREE.MeshStandardMaterial({ map: makeFloorTexture(), roughness: 0.65 }),
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.set(0, -2.5, 5);
-floor.receiveShadow = true;
-scene.add(floor);
-
-// Alcove floor patch (so the floor continues inside the alcove depth)
-const alcoveFloor = new THREE.Mesh(
-  new THREE.PlaneGeometry(ALC_W + 1, 3),
-  new THREE.MeshStandardMaterial({ color: 0xb8966a, roughness: 0.7 }),
-);
-alcoveFloor.rotation.x = -Math.PI / 2;
-alcoveFloor.position.set(ALC_CENTER_X, -2.5, -0.8);
-scene.add(alcoveFloor);
-
-// Soft glow billboard inside alcove (reads as a hidden lamp)
-function makeGlowTexture() {
-  const size = 256;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, 'rgba(255,170,100,0.95)');
-  g.addColorStop(0.4, 'rgba(255,110,50,0.4)');
-  g.addColorStop(1, 'rgba(255,80,30,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(c);
-}
-const glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-  map: makeGlowTexture(),
-  transparent: true,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending,
-}));
-glowSprite.scale.set(4, 4, 1);
-glowSprite.position.set(ALC_CENTER_X, 2.0, -1.0);
-scene.add(glowSprite);
-
-// --- Nail ---------------------------------------------------------------
-
-// Nail positioned so a 2.0 x 3.09 poster hangs clearly to the LEFT of the alcove.
-const NAIL_X = -3.6;
-const NAIL_Y = 3.3;
-const nail = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.03, 0.03, 0.08, 16),
-  new THREE.MeshStandardMaterial({ color: 0x2a2a2e, metalness: 0.7, roughness: 0.4 }),
-);
-nail.rotation.x = Math.PI / 2;
-nail.position.set(NAIL_X, NAIL_Y, 0.05);
-nail.castShadow = true;
-scene.add(nail);
-
-// --- Posters (individual textures) ---------------------------------------
+import { makePlaster, makeFloorboards, makePaperGrain, makeWindowCookie, makeLinearShadow } from './textures.js';
+import { makeShelf, makeTurntable, makeGlassLamp, makeBasket } from './props.js';
+import { Poster, POSTER_W, POSTER_H } from './poster.js';
 
 const POSTER_COUNT = 8;
-const POSTER_W = 2.0;
-const POSTER_H = POSTER_W * (1224 / 792); // ≈ 3.09
+const HOVER_Z = 0.16;
+const FOV = 34;
+const LOOK_Y = 1.02;
+const CAM_Y = 1.12;
 
-const texLoader = new THREE.TextureLoader();
-const posterTextures = await Promise.all(
-  Array.from({ length: POSTER_COUNT }, (_, i) => {
-    return new Promise((resolve) => {
-      const n = String(i + 1).padStart(2, '0');
-      texLoader.load(`./posters/${n}.png`, (t) => {
-        t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 16;
-        t.minFilter = THREE.LinearMipmapLinearFilter;
-        t.magFilter = THREE.LinearFilter;
-        resolve(t);
-      });
-    });
-  }),
-);
-
-// A side texture for the rolled poster — just the poster itself wrapping the cylinder vertically
-function makeRollSideMat(tex) {
-  const sideTex = tex.clone();
-  sideTex.wrapS = THREE.RepeatWrapping;
-  sideTex.wrapT = THREE.ClampToEdgeWrapping;
-  sideTex.repeat.set(1, 1);
-  sideTex.needsUpdate = true;
-  return new THREE.MeshStandardMaterial({
-    map: sideTex,
-    roughness: 0.9,
-    metalness: 0.0,
-  });
-}
-
-// Paper roll end cap
-function makeCapTexture() {
-  const size = 128;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#f3ead6';
-  ctx.fillRect(0, 0, size, size);
-  for (let r = size * 0.47; r > 2; r -= 2.5) {
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, r, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(140,110,70,${0.06 + Math.random() * 0.09})`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-  const g = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size * 0.5);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.3)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-const capTex = makeCapTexture();
-const capMat = new THREE.MeshStandardMaterial({ map: capTex, roughness: 0.95 });
-
-// --- Basket --------------------------------------------------------------
-
-const basketGroup = new THREE.Group();
-basketGroup.position.set(4.4, -2.05, 2.4);
-scene.add(basketGroup);
-
-function makeBasketTexture() {
-  const size = 512;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  // Chalky off-white base so the basket reads retro-futurist, not rustic
-  ctx.fillStyle = '#d9cfbf';
-  ctx.fillRect(0, 0, size, size);
-  const step = 28;
-  for (let y = 0; y < size; y += step) {
-    for (let x = 0; x < size; x += step) {
-      const even = ((x / step + y / step) | 0) % 2 === 0;
-      const grad = ctx.createLinearGradient(x, y, x + step, y + step);
-      if (even) {
-        grad.addColorStop(0, '#eadfca');
-        grad.addColorStop(0.5, '#f1e7d3');
-        grad.addColorStop(1, '#c8baa0');
-      } else {
-        grad.addColorStop(0, '#b7a98e');
-        grad.addColorStop(0.5, '#ccbea0');
-        grad.addColorStop(1, '#9b8d72');
-      }
-      ctx.fillStyle = grad;
-      const r = 6;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + step - r, y);
-      ctx.quadraticCurveTo(x + step, y, x + step, y + r);
-      ctx.lineTo(x + step, y + step - r);
-      ctx.quadraticCurveTo(x + step, y + step, x + step - r, y + step);
-      ctx.lineTo(x + r, y + step);
-      ctx.quadraticCurveTo(x, y + step, x, y + step - r);
-      ctx.lineTo(x, y + r);
-      ctx.quadraticCurveTo(x, y, x + r, y);
-      ctx.fill();
-    }
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(3, 1);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
-  return t;
-}
-
-const basketBody = new THREE.Mesh(
-  new THREE.CylinderGeometry(1.15, 0.86, 1.5, 48, 1, true),
-  new THREE.MeshStandardMaterial({ map: makeBasketTexture(), roughness: 0.85, side: THREE.DoubleSide }),
-);
-basketBody.position.y = 0;
-basketBody.castShadow = true;
-basketBody.receiveShadow = true;
-basketGroup.add(basketBody);
-
-const basketRim = new THREE.Mesh(
-  new THREE.TorusGeometry(1.15, 0.055, 10, 48),
-  new THREE.MeshStandardMaterial({ color: 0x8d7857, roughness: 0.6 }),
-);
-basketRim.rotation.x = Math.PI / 2;
-basketRim.position.y = 0.75;
-basketRim.castShadow = true;
-basketGroup.add(basketRim);
-
-const basketFloor = new THREE.Mesh(
-  new THREE.CircleGeometry(0.86, 48),
-  new THREE.MeshStandardMaterial({ color: 0x3d2a1a, roughness: 1.0 }),
-);
-basketFloor.rotation.x = -Math.PI / 2;
-basketFloor.position.y = -0.65;
-basketGroup.add(basketFloor);
-
-const blob = new THREE.Mesh(
-  new THREE.CircleGeometry(1.5, 32),
-  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 }),
-);
-blob.rotation.x = -Math.PI / 2;
-blob.position.set(basketGroup.position.x, -2.49, basketGroup.position.z);
-scene.add(blob);
-
-// --- Rolled posters inside the basket -----------------------------------
-
-const ROLL_RADIUS = 0.11;
-const ROLL_HEIGHT = 2.0;
-
-function makeRolledMesh(i) {
-  const group = new THREE.Group();
-  const sideMat = makeRollSideMat(posterTextures[i]);
-  const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(ROLL_RADIUS, ROLL_RADIUS, ROLL_HEIGHT, 32, 1),
-    [sideMat, capMat, capMat],
-  );
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-  group.userData.body = body;
-  return group;
-}
-
-function makeFlatMesh(i) {
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
-    map: posterTextures[i],
-    roughness: 0.75,
-    metalness: 0.0,
-    side: THREE.FrontSide,
-  });
-  const paper = new THREE.Mesh(new THREE.PlaneGeometry(POSTER_W, POSTER_H), mat);
-  paper.castShadow = true;
-  paper.receiveShadow = true;
-  group.add(paper);
-  const back = new THREE.Mesh(
-    new THREE.PlaneGeometry(POSTER_W + 0.02, POSTER_H + 0.02),
-    new THREE.MeshStandardMaterial({ color: 0xf0e9d8, roughness: 0.9 }),
-  );
-  back.position.z = -0.005;
-  group.add(back);
-  return group;
-}
-
-// Lay out rolled posters inside the basket (ring arrangement, slight tilts)
-const basketLocal = [];
-for (let i = 0; i < POSTER_COUNT; i++) {
-  const t = i / POSTER_COUNT;
-  const angle = t * Math.PI * 2;
-  const r = 0.42 + ((i * 37) % 10) / 60;
-  basketLocal.push({
-    pos: new THREE.Vector3(Math.cos(angle) * r, 0.9, Math.sin(angle) * r * 0.7),
-    tilt: new THREE.Euler(
-      ((i * 13) % 7 - 3) * 0.05,
-      0,
-      ((i * 29) % 11 - 5) * 0.06,
-    ),
-  });
-}
-
-const posters = [];
-for (let i = 0; i < POSTER_COUNT; i++) {
-  const rolled = makeRolledMesh(i);
-  rolled.position.copy(basketLocal[i].pos);
-  rolled.rotation.copy(basketLocal[i].tilt);
-  basketGroup.add(rolled);
-
-  const flat = makeFlatMesh(i);
-  flat.visible = false;
-  flat.position.set(NAIL_X, NAIL_Y - POSTER_H / 2 - 0.03, 0.04);
-  scene.add(flat);
-
-  posters.push({
-    index: i,
-    rolled,
-    flat,
-    home: {
-      pos: basketLocal[i].pos.clone(),
-      rot: basketLocal[i].tilt.clone(),
-    },
-    state: 'rolled',
-    anim: null,
-  });
-}
-
-// --- Picking ------------------------------------------------------------
-
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-
-const pickables = [];
-posters.forEach(p => {
-  p.rolled.traverse(obj => { if (obj.isMesh) { obj.userData.posterRef = p; pickables.push(obj); } });
-  p.flat.traverse(obj => { if (obj.isMesh) { obj.userData.posterRef = p; pickables.push(obj); } });
+const loaderEl = document.getElementById('loader');
+const hintEl = document.getElementById('hint');
+const countEl = document.getElementById('count');
+// Yield so the loader can paint; the timeout keeps loading moving in background tabs where rAF is paused.
+const nextFrame = () => new Promise(r => {
+  requestAnimationFrame(() => r());
+  setTimeout(r, 60);
 });
 
-let hangingPoster = null;
+// --- Tweening ------------------------------------------------------------
 
-function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
-
-function hangPoster(p) {
-  if (hangingPoster && hangingPoster !== p) {
-    rollPoster(hangingPoster);
+const ease = {
+  linear: t => t,
+  inCubic: t => t * t * t,
+  outCubic: t => 1 - Math.pow(1 - t, 3),
+  inOutCubic: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  outBack: t => 1 + 2.4 * Math.pow(t - 1, 3) + 1.4 * Math.pow(t - 1, 2),
+  outQuint: t => 1 - Math.pow(1 - t, 5),
+};
+const tweens = new Set();
+function animate(duration, update, fn = ease.inOutCubic) {
+  return new Promise(resolve => {
+    tweens.add({ start: performance.now(), duration: duration * 1000, update, fn, resolve });
+  });
+}
+const sleep = s => new Promise(r => setTimeout(r, s * 1000));
+function runTweens(now) {
+  for (const tw of tweens) {
+    const t = Math.min(1, (now - tw.start) / tw.duration);
+    tw.update(tw.fn(t), t);
+    if (t >= 1) {
+      tweens.delete(tw);
+      tw.resolve();
+    }
   }
-  p.state = 'animatingUp';
-  const rolled = p.rolled;
-  const startWorld = new THREE.Vector3();
-  rolled.getWorldPosition(startWorld);
-  const startQuat = new THREE.Quaternion();
-  rolled.getWorldQuaternion(startQuat);
-  scene.attach(rolled);
-  rolled.position.copy(startWorld);
-  rolled.quaternion.copy(startQuat);
-
-  const wallTarget = new THREE.Vector3(NAIL_X, NAIL_Y - POSTER_H / 2 - 0.03, 0.08);
-  const mid = new THREE.Vector3(
-    (startWorld.x + wallTarget.x) / 2,
-    Math.max(startWorld.y, wallTarget.y) + 1.0,
-    (startWorld.z + wallTarget.z) / 2 + 0.6,
-  );
-  const endQuat = new THREE.Quaternion();
-  const dur = 0.85;
-  let t0 = null;
-  p.anim = (now) => {
-    if (t0 === null) t0 = now;
-    const t = Math.min(1, (now - t0) / dur);
-    const e = easeInOut(t);
-    const a = startWorld.clone().lerp(mid, e);
-    const b = mid.clone().lerp(wallTarget, e);
-    rolled.position.copy(a.lerp(b, e));
-    rolled.quaternion.copy(startQuat).slerp(endQuat, e);
-    if (t >= 1) {
-      scene.remove(rolled);
-      p.flat.visible = true;
-      p.flat.scale.set(0.02, 1, 1);
-      p.state = 'unrolling';
-      const t1 = now;
-      p.anim = (nn) => {
-        const tt = Math.min(1, (nn - t1) / 0.4);
-        const ee = easeInOut(tt);
-        p.flat.scale.set(0.02 + 0.98 * ee, 1, 1);
-        if (tt >= 1) {
-          p.flat.scale.set(1, 1, 1);
-          p.state = 'hanging';
-          hangingPoster = p;
-          p.anim = null;
-        }
-      };
-    }
-  };
 }
 
-function rollPoster(p) {
-  p.state = 'rolling';
-  const flat = p.flat;
-  const t0 = performance.now() / 1000;
-  const dur1 = 0.33;
-  p.anim = (now) => {
-    const t = Math.min(1, (now - t0) / dur1);
-    const e = easeInOut(t);
-    flat.scale.set(1 - 0.98 * e, 1, 1);
-    if (t >= 1) {
-      flat.visible = false;
-      flat.scale.set(1, 1, 1);
-      const rolled = p.rolled;
-      scene.add(rolled);
-      const startWorld = new THREE.Vector3(NAIL_X, NAIL_Y - POSTER_H / 2 - 0.03, 0.08);
-      const startQuat = new THREE.Quaternion();
-      const basketWorld = new THREE.Vector3();
-      basketGroup.localToWorld(basketWorld.copy(p.home.pos));
-      const endQuat = new THREE.Quaternion().setFromEuler(p.home.rot).premultiply(basketGroup.quaternion);
-      const mid = new THREE.Vector3(
-        (startWorld.x + basketWorld.x) / 2,
-        Math.max(startWorld.y, basketWorld.y) + 0.9,
-        (startWorld.z + basketWorld.z) / 2 + 0.5,
-      );
-      const t1 = now;
-      const dur2 = 0.8;
-      rolled.position.copy(startWorld);
-      rolled.quaternion.copy(startQuat);
-      p.anim = (nn) => {
-        const tt = Math.min(1, (nn - t1) / dur2);
-        const ee = easeInOut(tt);
-        const a = startWorld.clone().lerp(mid, ee);
-        const b = mid.clone().lerp(basketWorld, ee);
-        rolled.position.copy(a.lerp(b, ee));
-        rolled.quaternion.copy(startQuat).slerp(endQuat, ee);
-        if (tt >= 1) {
-          basketGroup.attach(rolled);
-          rolled.position.copy(p.home.pos);
-          rolled.rotation.copy(p.home.rot);
-          p.state = 'rolled';
-          if (hangingPoster === p) hangingPoster = null;
-          p.anim = null;
-        }
-      };
-    }
-  };
-}
+async function init() {
+  // --- Renderer / scene --------------------------------------------------
 
-function onPointerDown(e) {
-  pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pickables, false);
-  if (!hits.length) return;
-  const first = hits[0].object.userData.posterRef;
-  if (!first) return;
-  if (first.state === 'rolled') hangPoster(first);
-  else if (first.state === 'hanging') rollPoster(first);
-}
-
-// Start with one poster already on the wall so the opening frame reads clearly.
-(function initialHang() {
-  const p = posters[0];
-  basketGroup.remove(p.rolled);
-  p.flat.visible = true;
-  p.flat.scale.set(1, 1, 1);
-  p.state = 'hanging';
-  hangingPoster = p;
-})();
-renderer.domElement.addEventListener('pointerdown', onPointerDown);
-
-// Hover cursor
-function onPointerMove(e) {
-  pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pickables, false);
-  renderer.domElement.style.cursor = hits.length ? 'pointer' : 'default';
-}
-renderer.domElement.addEventListener('pointermove', onPointerMove);
-
-// --- Loop ----------------------------------------------------------------
-
-function tick() {
-  const now = performance.now() / 1000;
-  posters.forEach(p => { if (p.anim) p.anim(now); });
-  // Subtle flicker on the alcove light so the glow feels alive
-  alcoveLight.intensity = 17.5 + Math.sin(now * 1.3) * 0.6 + Math.sin(now * 3.7) * 0.3;
-  renderer.render(scene, camera);
-  requestAnimationFrame(tick);
-}
-tick();
-
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.88;
+  document.getElementById('stage').appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1a1d24);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.22;
+
+  const camera = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.05, 50);
+  const view = { halfW: 2, halfH: 1.3, lookY: LOOK_Y };
+  function frameCamera() {
+    const aspect = window.innerWidth / window.innerHeight || 16 / 10;
+    const t = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
+    const d = Math.max(2.55 / (2 * t), 3.5 / (2 * t * aspect));
+    view.halfH = d * t;
+    view.halfW = view.halfH * aspect;
+    // On tall screens, aim higher so the extra height goes to wall, not floor.
+    view.lookY = Math.max(LOOK_Y, view.halfH - 0.45);
+    camera.aspect = aspect;
+    camera.position.set(0, view.lookY + (CAM_Y - LOOK_Y), d);
+    camera.lookAt(0, view.lookY, 0);
+    camera.updateProjectionMatrix();
+  }
+  frameCamera();
+
+  // --- Room ----------------------------------------------------------------
+
+  await nextFrame();
+  const plaster = makePlaster();
+  plaster.map.repeat.set(4.5, 3);
+  plaster.bump.repeat.set(4.5, 3);
+  const wall = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 6),
+    new THREE.MeshStandardMaterial({ map: plaster.map, bumpMap: plaster.bump, bumpScale: 1.2, roughness: 0.94, color: 0xf2f4f8 }),
+  );
+  wall.position.set(0, 3, 0);
+  wall.receiveShadow = true;
+  scene.add(wall);
+
+  await nextFrame();
+  const boards = makeFloorboards();
+  for (const t of [boards.map, boards.bump, boards.rough]) t.repeat.set(4.5, 3.5);
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 7),
+    new THREE.MeshStandardMaterial({ map: boards.map, bumpMap: boards.bump, bumpScale: 2, roughnessMap: boards.rough, roughness: 1 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, 0, 3.5);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Ambient occlusion where wall meets floor
+  const aoTex = makeLinearShadow();
+  const wallAO = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 0.22),
+    new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, opacity: 0.55, depthWrite: false }),
+  );
+  wallAO.position.set(0, 0.11, 0.001);
+  wallAO.rotation.z = Math.PI; // dark edge at the bottom
+  wallAO.material.map.flipY = true;
+  scene.add(wallAO);
+  const floorAO = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 0.3),
+    new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, opacity: 0.5, depthWrite: false }),
+  );
+  floorAO.rotation.x = -Math.PI / 2;
+  floorAO.position.set(0, 0.001, 0.15);
+  scene.add(floorAO);
+
+  // --- Props -----------------------------------------------------------
+
+  const shelf = makeShelf();
+  shelf.group.position.set(-0.25, 0, 0.215);
+  scene.add(shelf.group);
+
+  const turntable = makeTurntable();
+  turntable.group.position.set(-0.6, shelf.topY, 0.235);
+  scene.add(turntable.group);
+
+  const lamp = makeGlassLamp();
+  lamp.group.position.set(-0.08, shelf.topY, 0.16);
+  lamp.group.rotation.y = 0.12;
+  scene.add(lamp.group);
+
+  const basket = makeBasket();
+  basket.group.position.set(1.18, 0, 0.36);
+  basket.group.rotation.y = -0.3;
+  scene.add(basket.group);
+
+  // --- Lighting ----------------------------------------------------------
+
+  scene.add(new THREE.HemisphereLight(0xaebfe6, 0x34343a, 0.42));
+
+  // Cool window light falling across the wall from the left
+  const windowLight = new THREE.SpotLight(0xd2deff, 70, 0, 0.42, 0.55, 2);
+  windowLight.position.set(-3.4, 3.3, 3.2);
+  windowLight.target.position.set(-0.3, 1.45, 0);
+  windowLight.map = makeWindowCookie();
+  windowLight.castShadow = true;
+  windowLight.shadow.mapSize.set(2048, 2048);
+  windowLight.shadow.camera.near = 1;
+  windowLight.shadow.camera.far = 12;
+  windowLight.shadow.bias = -0.0004;
+  windowLight.shadow.normalBias = 0.02;
+  scene.add(windowLight, windowLight.target);
+
+  const fill = new THREE.DirectionalLight(0xdfe7ff, 0.35);
+  fill.position.set(1.5, 2.2, 5);
+  scene.add(fill);
+
+  // Broad warm wash from the lamp, the orange bloom on the wall
+  const wash = new THREE.PointLight(0xff5e1f, 0.75, 0, 2);
+  wash.position.set(-0.08, shelf.topY + 0.18, 0.38);
+  scene.add(wash);
+
+  // --- Posters -----------------------------------------------------------
+
+  loaderEl.querySelector('span').textContent = 'Printing posters…';
+  await nextFrame();
+  const grain = new THREE.CanvasTexture(makePaperGrain());
+  grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
+  grain.repeat.set(2, 3);
+
+  const images = await Promise.all(
+    Array.from({ length: POSTER_COUNT }, (_, i) => {
+      const img = new Image();
+      const loaded = new Promise((resolve, reject) => {
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+      });
+      img.src = `./posters/${String(i + 1).padStart(2, '0')}.png`;
+      return loaded;
+    }),
+  );
+
+  const posters = [];
+  const slotOrigin = (slot) => {
+    const o = new THREE.Vector3(0, POSTER_H / 2 + 0.018, 0).applyQuaternion(slot.quat).add(slot.pos);
+    return o;
+  };
+  for (let i = 0; i < POSTER_COUNT; i++) {
+    const p = new Poster(i, images[i], grain);
+    p.slot = basket.slots[i];
+    p.group.position.copy(slotOrigin(p.slot));
+    p.group.quaternion.copy(p.slot.quat);
+    basket.group.add(p.group);
+    posters.push(p);
+    if (i % 2 === 1) await nextFrame();
+  }
+
+  // --- Post-processing ---------------------------------------------------
+
+  const composer = new EffectComposer(renderer);
+  composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  composer.setSize(window.innerWidth, window.innerHeight);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.45, 0.85, 2.2);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  const grade = new ShaderPass({
+    uniforms: {
+      tDiffuse: { value: null },
+      uTime: { value: 0 },
+      uRes: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D tDiffuse;
+      uniform float uTime;
+      uniform vec2 uRes;
+      varying vec2 vUv;
+      float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      void main() {
+        vec2 d = vUv - 0.5;
+        vec2 off = d * 0.0016 * length(d) * 2.0;
+        vec3 c = vec3(
+          texture2D(tDiffuse, vUv + off).r,
+          texture2D(tDiffuse, vUv).g,
+          texture2D(tDiffuse, vUv - off).b
+        );
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        c *= mix(vec3(0.86, 0.94, 1.1), vec3(1.03, 1.0, 0.97), smoothstep(0.15, 0.9, l));
+        c = c * 0.955 + vec3(0.018, 0.022, 0.03);
+        vec2 dv = d; dv.x *= uRes.x / uRes.y;
+        c *= mix(0.68, 1.0, smoothstep(1.05, 0.3, length(dv)));
+        c += (hash(vUv * uRes + fract(uTime * 7.0) * vec2(91.7, 37.3)) - 0.5) * 0.045;
+        gl_FragColor = vec4(c, 1.0);
+      }
+    `,
+  });
+  composer.addPass(grade);
+
+  // --- Interaction -------------------------------------------------------
+
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2(0, 0.3);
+  const target = new THREE.Vector3(0, 1.5, 0);
+  const tmp = new THREE.Vector3();
+  const occluders = [shelf.group, turntable.group, lamp.group];
+  let held = null;
+  let holdZ = HOVER_Z;
+  let busy = false;
+  let hovered = null;
+  let stackOrder = 0;
+  let touchHolding = false;
+  const heldVel = new THREE.Vector2();
+  const heldPrev = new THREE.Vector2();
+
+  function setNDC(e) {
+    ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+    ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  }
+
+  function pickPoster() {
+    raycaster.setFromCamera(ndc, camera);
+    const candidates = [];
+    for (const p of posters) {
+      if (p.state === 'basket') candidates.push(p.proxy);
+      else if (p.state === 'wall') candidates.push(p.mesh);
+    }
+    const hits = raycaster.intersectObjects([...candidates, ...occluders], true);
+    const first = hits[0];
+    return first && first.object.userData.poster ? first.object.userData.poster : null;
+  }
+
+  function pointedAtBasket() {
+    raycaster.setFromCamera(ndc, camera);
+    return raycaster.intersectObject(basket.group, true).length > 0;
+  }
+
+  function clampToWall(v) {
+    const m = 0.06;
+    const xMax = view.halfW - POSTER_W / 2 - m;
+    const yMin = POSTER_H / 2 + 0.06;
+    const yMax = view.lookY + view.halfH - POSTER_H / 2 - m;
+    v.x = xMax > 0 ? THREE.MathUtils.clamp(v.x, -xMax, xMax) : 0;
+    v.y = yMax > yMin ? THREE.MathUtils.clamp(v.y, yMin, yMax) : yMin;
+    return v;
+  }
+
+  function updateTarget() {
+    raycaster.setFromCamera(ndc, camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -holdZ);
+    if (raycaster.ray.intersectPlane(plane, tmp)) {
+      target.set(tmp.x, tmp.y, 0);
+      clampToWall(target);
+    }
+  }
+
+  function slotWorld(p) {
+    const pos = basket.group.localToWorld(slotOrigin(p.slot));
+    const quat = basket.group.quaternion.clone().multiply(p.slot.quat);
+    return { pos, quat };
+  }
+
+  function bezier(a, b, c, t, out) {
+    const it = 1 - t;
+    return out.set(0, 0, 0).addScaledVector(a, it * it).addScaledVector(b, 2 * it * t).addScaledVector(c, t * t);
+  }
+
+  async function flyTo(p, endPos, endQuat, dur, arc = 0.35) {
+    const g = p.group;
+    const a = g.position.clone();
+    const q0 = g.quaternion.clone();
+    const mid = a.clone().lerp(endPos, 0.5);
+    mid.y = Math.max(a.y, endPos.y) + arc;
+    mid.z += 0.25;
+    await animate(dur, e => {
+      bezier(a, mid, endPos, e, g.position);
+      g.quaternion.slerpQuaternions(q0, endQuat, e);
+    });
+  }
+
+  async function takeOut(p) {
+    busy = true;
+    p.state = 'lifting';
+    setHint('Unrolling…');
+    p.lift.position.set(0, 0, 0);
+    scene.attach(p.group);
+    const g = p.group;
+
+    // Draw it straight up out of the basket along its own axis
+    const start = g.position.clone();
+    const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(g.quaternion);
+    const up = start.clone().addScaledVector(axis, 0.62);
+    await animate(0.5, e => g.position.lerpVectors(start, up, e), ease.outCubic);
+
+    // Bring it up to the viewer, roll facing forward
+    const pres = new THREE.Vector3(0, view.lookY + 0.04, camera.position.z - 2.15);
+    await flyTo(p, pres, new THREE.Quaternion(), 0.75, 0.25);
+
+    // Snap the band off, then unroll: the print is revealed as the roll travels across
+    await animate(0.22, (e) => {
+      p.band.position.y = POSTER_H * 0.22 + e * 0.12;
+      p.band.scale.z = 1 - e;
+      p.band.material.opacity = 1 - e;
+    }, ease.inCubic);
+    p.band.visible = false;
+    p.state = 'unrolling';
+    const ry = g.rotation.y;
+    await animate(1.35, (e, t) => {
+      p.u = POSTER_W * e;
+      p.update();
+      g.rotation.y = ry + Math.sin(t * Math.PI * 2) * 0.05 * (1 - t);
+      g.rotation.z = Math.sin(t * Math.PI * 3) * 0.015 * (1 - t);
+    }, ease.outCubic);
+    p.u = POSTER_W;
+    p.update();
+    await sleep(0.25);
+
+    // Carry it to the wall; it hovers there following the cursor
+    held = p;
+    p.state = 'held';
+    heldPrev.set(g.position.x, g.position.y);
+    const z0 = g.position.z;
+    const r0 = g.rotation.clone();
+    holdZ = z0;
+    updateTarget();
+    setHint('Move to place  ·  click to stick  ·  esc to put back');
+    await animate(0.8, e => {
+      holdZ = THREE.MathUtils.lerp(z0, HOVER_Z, e);
+      g.rotation.y = r0.y * (1 - e);
+    }, ease.inOutCubic);
+    busy = false;
+  }
+
+  async function stick(p) {
+    busy = true;
+    held = null;
+    p.state = 'sticking';
+    const g = p.group;
+    const z0 = g.position.z;
+    stackOrder += 1;
+    const z1 = 0.0035 + Math.min(stackOrder, 40) * 0.0011;
+    const rz0 = g.rotation.z, rz1 = (Math.random() - 0.5) * 0.045;
+    const rx0 = g.rotation.x;
+    const c0 = p.curl;
+    await animate(0.24, e => {
+      g.position.z = THREE.MathUtils.lerp(z0, z1, e);
+      g.rotation.z = THREE.MathUtils.lerp(rz0, rz1, e);
+      g.rotation.x = THREE.MathUtils.lerp(rx0, 0, e);
+      p.curl = c0 * (1 - e);
+      p.update();
+    }, ease.inCubic);
+    p.wallZ = z1;
+    p.curl = 0;
+    p.wave = 1;
+    p.update();
+    animate(0.25, e => {
+      const s = 1 + Math.sin(e * Math.PI) * 0.016;
+      p.lift.scale.set(s, s, 1);
+    }, ease.linear);
+    p.setTapes(true);
+    for (const t of p.tapes) {
+      animate(0.32, e => t.scale.setScalar(Math.max(0, ease.outBack(e))), ease.linear);
+      await sleep(0.07);
+    }
+    p.state = 'wall';
+    busy = false;
+    refreshUI();
+  }
+
+  async function returnToBasket(p) {
+    const { pos, quat } = slotWorld(p);
+    const above = pos.clone().add(new THREE.Vector3(0, 0.6, 0));
+    await flyTo(p, above, quat, 0.75, 0.3);
+    const from = p.group.position.clone();
+    await animate(0.45, e => p.group.position.lerpVectors(from, pos, e), ease.outQuint);
+    basket.group.attach(p.group);
+    p.group.position.copy(slotOrigin(p.slot));
+    p.group.quaternion.copy(p.slot.quat);
+    p.state = 'basket';
+  }
+
+  async function rollUp(p, dur = 0.95) {
+    const u0 = p.u;
+    await animate(dur, e => {
+      p.u = u0 * (1 - e);
+      p.update();
+    }, ease.inOutCubic);
+    p.curl = 1;
+    p.u = 0;
+    p.update();
+    p.band.visible = true;
+    p.band.scale.z = 1;
+    animate(0.25, e => { p.band.material.opacity = e; }, ease.linear);
+  }
+
+  async function peel(p) {
+    busy = true;
+    p.state = 'peeling';
+    setHint('Peeling…');
+    hovered = null;
+    p.tapes.forEach((t, i) => {
+      sleep(i * 0.05).then(() => animate(0.16, e => t.scale.setScalar(1 - e), ease.inCubic));
+    });
+    await sleep(0.32);
+    p.setTapes(false);
+    const g = p.group;
+    const z0 = g.position.z;
+    const rz0 = g.rotation.z;
+    await animate(0.4, (e, t) => {
+      g.position.z = THREE.MathUtils.lerp(z0, 0.22, e);
+      g.rotation.z = rz0 * (1 - e);
+      g.rotation.x = Math.sin(t * Math.PI) * -0.18;
+      p.wave = 1 - e;
+      p.curl = e;
+      p.update();
+    }, ease.outCubic);
+    p.lift.position.set(0, 0, 0);
+    await rollUp(p);
+    await returnToBasket(p);
+    busy = false;
+    refreshUI();
+  }
+
+  async function putBack(p) {
+    busy = true;
+    held = null;
+    p.state = 'returning';
+    const g = p.group;
+    const r0 = g.quaternion.clone();
+    animate(0.4, e => g.quaternion.slerpQuaternions(r0, new THREE.Quaternion(), e));
+    await rollUp(p, 0.8);
+    await returnToBasket(p);
+    busy = false;
+    refreshUI();
+  }
+
+  function setHint(text) {
+    if (hintEl.textContent !== text) {
+      hintEl.classList.remove('show');
+      void hintEl.offsetWidth;
+      hintEl.textContent = text;
+      hintEl.classList.add('show');
+    }
+  }
+
+  function refreshUI() {
+    const n = posters.filter(p => p.state === 'wall').length;
+    countEl.textContent = `${String(n).padStart(2, '0')} / ${String(POSTER_COUNT).padStart(2, '0')}`;
+    if (held) return;
+    setHint(n === 0 ? 'Pick a rolled poster from the basket' : 'Pick another  ·  click a poster on the wall to peel it off');
+  }
+
+  const canvasEl = renderer.domElement;
+  canvasEl.addEventListener('pointermove', e => {
+    setNDC(e);
+    if (held) {
+      updateTarget();
+      return;
+    }
+    const p = busy ? null : pickPoster();
+    hovered = p;
+    canvasEl.style.cursor = p ? 'pointer' : 'default';
+  });
+
+  canvasEl.addEventListener('pointerdown', e => {
+    setNDC(e);
+    if (held) {
+      if (busy) return;
+      if (pointedAtBasket()) {
+        putBack(held);
+        return;
+      }
+      updateTarget();
+      if (e.pointerType === 'touch') {
+        touchHolding = true;
+        return;
+      }
+      stick(held);
+      return;
+    }
+    if (busy) return;
+    const p = pickPoster();
+    if (!p) return;
+    canvasEl.style.cursor = 'default';
+    hovered = null;
+    if (p.state === 'basket') takeOut(p);
+    else if (p.state === 'wall') peel(p);
+  });
+
+  canvasEl.addEventListener('pointerup', e => {
+    if (touchHolding && held && !busy) {
+      setNDC(e);
+      updateTarget();
+      stick(held);
+    }
+    touchHolding = false;
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && held && !busy) putBack(held);
+  });
+
+  const size = new THREE.Vector2();
+  function syncSize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.getSize(size);
+    if (!w || !h || (size.x === w && size.y === h)) return;
+    frameCamera();
+    renderer.setSize(w, h);
+    composer.setSize(w, h);
+    grade.uniforms.uRes.value.set(w, h);
+  }
+
+  // --- Loop --------------------------------------------------------------
+
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const t = now / 1000;
+    syncSize();
+    runTweens(now);
+
+    turntable.vinyl.rotation.y -= dt * 3.49; // 33⅓ rpm
+    const flicker = 1 + Math.sin(t * 2.1) * 0.03 + Math.sin(t * 7.3) * 0.015;
+    lamp.light.intensity = 1.3 * flicker;
+    wash.intensity = 0.75 * flicker;
+    lamp.hot.emissiveIntensity = 9 * flicker;
+
+    if (held && held.state === 'held') {
+      const g = held.group;
+      const k = 1 - Math.exp(-dt * 9);
+      g.position.x += (target.x - g.position.x) * k;
+      g.position.y += (target.y - g.position.y) * k;
+      g.position.z = holdZ;
+      if (dt > 0) {
+        heldVel.set((g.position.x - heldPrev.x) / dt, (g.position.y - heldPrev.y) / dt);
+      }
+      heldPrev.set(g.position.x, g.position.y);
+      const sway = 1 - Math.exp(-dt * 7);
+      const rzT = THREE.MathUtils.clamp(-heldVel.x * 0.07, -0.14, 0.14);
+      const rxT = THREE.MathUtils.clamp(heldVel.y * 0.05, -0.1, 0.1);
+      g.rotation.z += (rzT - g.rotation.z) * sway;
+      g.rotation.x += (rxT - g.rotation.x) * sway;
+      held.lift.position.y = Math.sin(t * 1.7) * 0.004;
+    }
+
+    for (const p of posters) {
+      if (p.state === 'basket') {
+        const ty = p === hovered ? 0.07 : 0;
+        p.lift.position.y += (ty - p.lift.position.y) * (1 - Math.exp(-dt * 12));
+      } else if (p.state === 'wall') {
+        const tz = p === hovered ? 0.012 : 0;
+        p.lift.position.z += (tz - p.lift.position.z) * (1 - Math.exp(-dt * 12));
+      }
+    }
+
+    grade.uniforms.uTime.value = t;
+    composer.render();
+    requestAnimationFrame(tick);
+  }
+
+  refreshUI();
+  requestAnimationFrame(tick);
+  loaderEl.classList.add('done');
+}
+
+init();

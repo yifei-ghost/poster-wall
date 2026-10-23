@@ -1,8 +1,14 @@
 # Poster Wall
 
-A tiny Three.js scene: one wall of a room, a woven basket in the bottom-right corner holding rolled-up posters, and a hook where any of them can be hung. Click a rolled poster to pin it to the wall; click the hanging poster to roll it back into the basket.
+A small Three.js room: a blank cool-white wall, a modular steel shelf with a turntable and a glass-block lamp, and a seagrass basket of rolled-up posters. Pull a poster out, watch it unroll, then tape it anywhere on the wall.
 
-Poster artwork is sourced from a Figma design strip (8 variants).
+## Interaction
+
+- **Basket**: hover a roll to lift it, click to take it out. The rubber band snaps off and the poster unrolls in front of you.
+- **Placing**: the poster floats just off the wall and follows the cursor. Click to stick it on with masking tape. `Esc` (or clicking the basket) rolls it back up.
+- **On the wall**: click a poster to peel it off. It rolls up and drops back into the basket.
+
+The camera is fixed straight-on.
 
 ## Run
 
@@ -11,17 +17,11 @@ npm install
 npm run dev
 ```
 
-Then open the printed localhost URL.
+## How it's built
 
-## Build
+- `src/poster.js`: each poster is one 240×18 segment plane, deformed on the CPU into an Archimedean spiral. One parameter (unrolled length) drives everything from a tight roll to a flat sheet. The front shows the print and the back shows the paper stock, with print show-through.
+- `src/textures.js`: all procedural textures: tileable value-noise plaster, worn pine floorboards (color/bump/roughness), twined seagrass weave, retro print treatment (paper multiply, plate misregistration, halftone screen, grain, ink drop-outs, edge wear), masking tape, vinyl grooves, window light cookie.
+- `src/props.js`: steel shelf with chrome tubes and ball connectors, turntable with smoked acrylic lid and spinning record, transmissive glass-block lamp with a shadow-casting point light, lathe-turned basket.
+- `src/main.js`: lighting (cool window spotlight with a mullion cookie, hemisphere fill, warm lamp + wash), post-processing (bloom, split-tone grade, vignette, grain, mild lens fringing), and the take-out / stick / peel state machine.
 
-```bash
-npm run build
-npm run preview
-```
-
-## Stack
-
-- [three.js](https://threejs.org/) r169
-- Vanilla JS + Vite
-- OrbitControls for camera, Raycaster for picking
+Poster artwork: 8 frames exported from the Figma file into `public/posters/`.
