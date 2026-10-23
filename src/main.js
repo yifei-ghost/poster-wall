@@ -174,7 +174,7 @@ async function init() {
   scene.add(lamp.group);
 
   const plate = await makeNamePlate(scene.environment);
-  plate.group.position.set(0.17, shelf.topY, 0.31);
+  plate.group.position.set(0.13, shelf.topY, 0.31);
   plate.group.rotation.y = 0.22;
   scene.add(plate.group);
 

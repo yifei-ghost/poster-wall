@@ -417,11 +417,11 @@ function loadImage(src) {
 
 export async function makeNamePlate(envMap) {
   const g = new THREE.Group();
-  const W = 0.2; // plate width
-  const H = 0.098; // ~2/3 of the lamp's height
+  const W = 0.145; // plate width, hugging the wordmark
+  const H = 0.066;
   const T = 0.003; // sheet thickness
   const LEAN = 0.17; // radians back from vertical
-  const FOOT = 0.065;
+  const FOOT = 0.05;
 
   const steel = (extra = {}) => new THREE.MeshPhysicalMaterial({
     color: 0xaab0b8,
@@ -468,7 +468,7 @@ export async function makeNamePlate(envMap) {
   // Face panel carrying the deboss, laid exactly on the front face.
   const CW = 1024, CH = Math.round(CW * (faceLen / W));
   const svg = await loadImage('./ghost-wordmark.svg');
-  const markW = CW * 0.62;
+  const markW = CW * 0.83; // ~1.2cm margin on every side
   const markH = markW * (svg.height / svg.width || 320 / 866);
   const mx = (CW - markW) / 2, my = (CH - markH) / 2;
 
