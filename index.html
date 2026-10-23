@@ -22,7 +22,7 @@
         font-family: 'IBM Plex Mono', ui-monospace, monospace;
         -webkit-font-smoothing: antialiased;
       }
-      #stage, canvas { display: block; position: fixed; inset: 0; }
+      #stage, canvas { display: block; position: fixed; inset: 0; touch-action: none; -webkit-user-select: none; user-select: none; }
       #hint {
         position: fixed;
         left: 50%;
@@ -66,6 +66,9 @@
       @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
       @media (max-width: 600px) {
         #hint { font-size: 10px; white-space: normal; text-align: center; width: calc(100% - 64px); }
+      }
+      @media (max-aspect-ratio: 9/10) {
+        #hint { bottom: auto; top: max(18px, env(safe-area-inset-top)); width: auto; max-width: calc(100% - 48px); }
       }
     </style>
   </head>

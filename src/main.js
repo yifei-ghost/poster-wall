@@ -18,6 +18,11 @@ const VIEW_BOTTOM = 0.42;
 const VIEW_TOP = 2.36;
 const VIEW_X = 0.2;
 const MIN_HALF_W = 1.45;
+// Portrait / mobile: a narrow slice anchored on the basket, shelf cropped on the left, tall wall above.
+const MOBILE_ASPECT = 0.9;
+const MOBILE_HALF_W = 1.0;
+const MOBILE_RIGHT = 1.5;
+const MOBILE_BOTTOM = 0.34;
 const PLACE_MARGIN = 0.05;
 
 const loaderEl = document.getElementById('loader');
@@ -80,15 +85,23 @@ async function init() {
   function frameCamera() {
     const aspect = window.innerWidth / window.innerHeight || 16 / 10;
     const t = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
-    const baseHalfH = (VIEW_TOP - VIEW_BOTTOM) / 2;
-    let halfH = baseHalfH;
-    if (halfH * aspect < MIN_HALF_W) halfH = MIN_HALF_W / aspect;
-    // Tall screens: most of the extra height goes to wall above, some below to keep the shelf in frame.
-    const extra = halfH - baseHalfH;
-    view.halfH = halfH;
-    view.halfW = halfH * aspect;
-    view.cx = VIEW_X;
-    view.cy = VIEW_BOTTOM + halfH - extra * 0.75;
+    if (aspect < MOBILE_ASPECT) {
+      view.halfW = MOBILE_HALF_W;
+      view.halfH = MOBILE_HALF_W / aspect;
+      view.cx = MOBILE_RIGHT - MOBILE_HALF_W;
+      view.cy = MOBILE_BOTTOM + view.halfH;
+    } else {
+      const baseHalfH = (VIEW_TOP - VIEW_BOTTOM) / 2;
+      let halfH = baseHalfH;
+      if (halfH * aspect < MIN_HALF_W) halfH = MIN_HALF_W / aspect;
+      // Squarish screens: most of the extra height goes to wall above, some below to keep the shelf in frame.
+      const extra = halfH - baseHalfH;
+      view.halfH = halfH;
+      view.halfW = halfH * aspect;
+      view.cx = VIEW_X;
+      view.cy = VIEW_BOTTOM + halfH - extra * 0.75;
+    }
+    const halfH = view.halfH;
     view.bottom = view.cy - halfH;
     view.d = halfH / t;
     camera.aspect = aspect;
@@ -284,9 +297,11 @@ async function init() {
   const heldVel = new THREE.Vector2();
   const heldPrev = new THREE.Vector2();
 
+  let pointerType = 'mouse';
   function setNDC(e) {
     ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
     ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    pointerType = e.pointerType || 'mouse';
   }
 
   const toScreen = (v) => {
@@ -305,7 +320,7 @@ async function init() {
     const px = (ndc.x + 1) / 2 * window.innerWidth;
     const py = (1 - ndc.y) / 2 * window.innerHeight;
     let best = null;
-    let bestD = Math.max(16, window.innerHeight * 0.028);
+    let bestD = Math.max(16, window.innerHeight * 0.028) * (pointerType === 'touch' ? 1.8 : 1);
     for (const p of posters) {
       if (p.state !== 'basket') continue;
       p.rollSegment(segA, segB);
@@ -483,12 +498,15 @@ async function init() {
     const r0 = g.rotation.clone();
     holdZ = z0;
     updateTarget();
-    setHint('Move to place  ·  click to stick  ·  esc to put back');
+    setHint(pointerType === 'touch'
+      ? 'Drag to place  ·  release to stick  ·  tap basket to put back'
+      : 'Move to place  ·  click to stick  ·  esc to put back');
+    // Input is live during the glide so an early tap or drag isn't swallowed.
+    busy = false;
     await animate(0.8, e => {
       holdZ = THREE.MathUtils.lerp(z0, HOVER_Z, e);
-      g.rotation.y = r0.y * (1 - e);
+      if (p.state === 'held') g.rotation.y = r0.y * (1 - e);
     }, ease.inOutCubic);
-    busy = false;
   }
 
   async function stick(p) {
@@ -595,7 +613,8 @@ async function init() {
   function refreshUI() {
     const n = posters.filter(p => p.state === 'wall').length;
     if (held) return;
-    setHint(n === 0 ? 'Pick a rolled poster from the basket' : 'Pick another  ·  click a poster on the wall to peel it off');
+    const verb = pointerType === 'touch' ? 'tap' : 'click';
+    setHint(n === 0 ? 'Pick a rolled poster from the basket' : `Pick another  ·  ${verb} a poster on the wall to peel it off`);
   }
 
   const canvasEl = renderer.domElement;
@@ -643,6 +662,7 @@ async function init() {
     }
     touchHolding = false;
   });
+  canvasEl.addEventListener('pointercancel', () => { touchHolding = false; });
 
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && held && !busy) putBack(held);
