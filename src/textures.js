@@ -354,7 +354,7 @@ export function makeRetroPrint(img, seed, W, H) {
 
   // Halftone screen at a classic angle
   ctx.globalCompositeOperation = 'overlay';
-  ctx.globalAlpha = 0.22;
+  ctx.globalAlpha = 0.08;
   ctx.save();
   ctx.rotate((15 * Math.PI) / 180);
   ctx.fillStyle = ctx.createPattern(halftonePattern(5), 'repeat');
@@ -362,18 +362,17 @@ export function makeRetroPrint(img, seed, W, H) {
   ctx.restore();
 
   // Print grain
-  ctx.globalAlpha = 0.45;
+  ctx.globalAlpha = 0.3;
   ctx.fillStyle = ctx.createPattern(noiseCanvas(), 'repeat');
   ctx.fillRect(0, 0, W, H);
   ctx.globalAlpha = 1;
 
-  // Ink drop-outs and dust
+  // A few faint ink drop-outs
   ctx.globalCompositeOperation = 'screen';
-  for (let i = 0; i < 420; i++) {
-    const r = rnd() < 0.9 ? 0.6 + rnd() * 1.2 : 2 + rnd() * 2.5;
-    ctx.fillStyle = `rgba(240,236,226,${0.25 + rnd() * 0.5})`;
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = `rgba(240,236,226,${0.12 + rnd() * 0.18})`;
     ctx.beginPath();
-    ctx.arc(rnd() * W, rnd() * H, r, 0, Math.PI * 2);
+    ctx.arc(rnd() * W, rnd() * H, 0.5 + rnd() * 0.8, 0, Math.PI * 2);
     ctx.fill();
   }
   // Light scuffs
@@ -406,16 +405,6 @@ export function makeRetroPrint(img, seed, W, H) {
   ctx.fillStyle = edge;
   ctx.fillRect(0, 0, W, H);
 
-  ctx.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 70; i++) {
-    const side = Math.floor(rnd() * 4);
-    const t = rnd();
-    const x = side === 0 ? 0 : side === 1 ? W : t * W;
-    const y = side === 2 ? 0 : side === 3 ? H : t * H;
-    ctx.beginPath();
-    ctx.arc(x, y, 1 + rnd() * 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.globalCompositeOperation = 'source-over';
   return c;
 }
@@ -446,35 +435,6 @@ export function makePaperBack(img, seed, W, H) {
   ctx.font = `${Math.round(W * 0.022)}px ui-monospace, monospace`;
   ctx.fillText(`CORE / PRINT RUN 2026 — No. ${String(Math.floor(rnd() * 900) + 100)}`, W * 0.06, H * 0.96);
   return c;
-}
-
-// --- Masking tape --------------------------------------------------------
-
-export function makeTape(seed) {
-  const W = 256, H = 72;
-  const rnd = mulberry32(seed);
-  const c = canvas(W, H);
-  const ctx = c.getContext('2d');
-  ctx.beginPath();
-  ctx.moveTo(6, 0);
-  for (let y = 0; y <= H; y += 4) ctx.lineTo(4 + rnd() * 7, y);
-  ctx.lineTo(W - 6, H);
-  for (let y = H; y >= 0; y -= 4) ctx.lineTo(W - 4 - rnd() * 7, y);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(232,222,196,0.86)';
-  ctx.fill();
-  ctx.save();
-  ctx.clip();
-  for (let x = 0; x < W; x += 3) {
-    ctx.fillStyle = `rgba(160,146,110,${0.04 + rnd() * 0.06})`;
-    ctx.fillRect(x, 0, 1, H);
-  }
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.fillRect(0, 0, W, 4);
-  ctx.restore();
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
 
 // --- Record label + grooves ---------------------------------------------

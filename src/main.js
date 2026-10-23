@@ -13,12 +13,15 @@ import { Poster, POSTER_W, POSTER_H } from './poster.js';
 const POSTER_COUNT = 8;
 const HOVER_Z = 0.16;
 const FOV = 34;
-const LOOK_Y = 1.02;
-const CAM_Y = 1.12;
+// Framing, measured on the wall plane: crop just above the shelf's lower tier, lots of wall above.
+const VIEW_BOTTOM = 0.42;
+const VIEW_TOP = 2.36;
+const VIEW_X = 0.2;
+const MIN_HALF_W = 1.45;
+const PLACE_MARGIN = 0.05;
 
 const loaderEl = document.getElementById('loader');
 const hintEl = document.getElementById('hint');
-const countEl = document.getElementById('count');
 // Yield so the loader can paint; the timeout keeps loading moving in background tabs where rAF is paused.
 const nextFrame = () => new Promise(r => {
   requestAnimationFrame(() => r());
@@ -73,18 +76,24 @@ async function init() {
   scene.environmentIntensity = 0.22;
 
   const camera = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.05, 50);
-  const view = { halfW: 2, halfH: 1.3, lookY: LOOK_Y };
+  const view = { halfW: 2, halfH: 1, cx: VIEW_X, cy: 1.4, d: 3 };
   function frameCamera() {
     const aspect = window.innerWidth / window.innerHeight || 16 / 10;
     const t = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
-    const d = Math.max(2.55 / (2 * t), 3.5 / (2 * t * aspect));
-    view.halfH = d * t;
-    view.halfW = view.halfH * aspect;
-    // On tall screens, aim higher so the extra height goes to wall, not floor.
-    view.lookY = Math.max(LOOK_Y, view.halfH - 0.45);
+    const baseHalfH = (VIEW_TOP - VIEW_BOTTOM) / 2;
+    let halfH = baseHalfH;
+    if (halfH * aspect < MIN_HALF_W) halfH = MIN_HALF_W / aspect;
+    // Tall screens: most of the extra height goes to wall above, some below to keep the shelf in frame.
+    const extra = halfH - baseHalfH;
+    view.halfH = halfH;
+    view.halfW = halfH * aspect;
+    view.cx = VIEW_X;
+    view.cy = VIEW_BOTTOM + halfH - extra * 0.75;
+    view.bottom = view.cy - halfH;
+    view.d = halfH / t;
     camera.aspect = aspect;
-    camera.position.set(0, view.lookY + (CAM_Y - LOOK_Y), d);
-    camera.lookAt(0, view.lookY, 0);
+    camera.position.set(view.cx, view.cy, view.d);
+    camera.lookAt(view.cx, view.cy, 0);
     camera.updateProjectionMatrix();
   }
   frameCamera();
@@ -149,8 +158,7 @@ async function init() {
   scene.add(lamp.group);
 
   const basket = makeBasket();
-  basket.group.position.set(1.18, 0, 0.36);
-  basket.group.rotation.y = -0.3;
+  basket.group.position.set(1.08, 0, 0.36);
   scene.add(basket.group);
 
   // --- Lighting ----------------------------------------------------------
@@ -265,7 +273,8 @@ async function init() {
   const ndc = new THREE.Vector2(0, 0.3);
   const target = new THREE.Vector3(0, 1.5, 0);
   const tmp = new THREE.Vector3();
-  const occluders = [shelf.group, turntable.group, lamp.group];
+  const segA = new THREE.Vector3();
+  const segB = new THREE.Vector3();
   let held = null;
   let holdZ = HOVER_Z;
   let busy = false;
@@ -280,39 +289,128 @@ async function init() {
     ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
   }
 
-  function pickPoster() {
-    raycaster.setFromCamera(ndc, camera);
-    const candidates = [];
+  const toScreen = (v) => {
+    tmp.copy(v).project(camera);
+    return [(tmp.x + 1) / 2 * window.innerWidth, (1 - tmp.y) / 2 * window.innerHeight];
+  };
+  function distToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const t = THREE.MathUtils.clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  }
+
+  // Rolls are picked by whichever roll axis is nearest the cursor on screen,
+  // so thin, overlapping rolls are each easy to isolate.
+  function pickRoll() {
+    const px = (ndc.x + 1) / 2 * window.innerWidth;
+    const py = (1 - ndc.y) / 2 * window.innerHeight;
+    let best = null;
+    let bestD = Math.max(16, window.innerHeight * 0.028);
     for (const p of posters) {
-      if (p.state === 'basket') candidates.push(p.proxy);
-      else if (p.state === 'wall') candidates.push(p.mesh);
+      if (p.state !== 'basket') continue;
+      p.rollSegment(segA, segB);
+      const [ax, ay] = toScreen(segA);
+      const [bx, by] = toScreen(segB);
+      const d = distToSegment(px, py, ax, ay, bx, by);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
     }
-    const hits = raycaster.intersectObjects([...candidates, ...occluders], true);
-    const first = hits[0];
-    return first && first.object.userData.poster ? first.object.userData.poster : null;
+    return best;
+  }
+
+  function pickPoster() {
+    const roll = pickRoll();
+    if (roll) return roll;
+    raycaster.setFromCamera(ndc, camera);
+    const onWall = posters.filter(p => p.state === 'wall').map(p => p.mesh);
+    const hit = raycaster.intersectObjects(onWall, false)[0];
+    return hit ? hit.object.userData.poster : null;
   }
 
   function pointedAtBasket() {
+    if (pickRoll()) return true;
     raycaster.setFromCamera(ndc, camera);
     return raycaster.intersectObject(basket.group, true).length > 0;
   }
 
-  function clampToWall(v) {
-    const m = 0.06;
-    const xMax = view.halfW - POSTER_W / 2 - m;
-    const yMin = POSTER_H / 2 + 0.06;
-    const yMax = view.lookY + view.halfH - POSTER_H / 2 - m;
-    v.x = xMax > 0 ? THREE.MathUtils.clamp(v.x, -xMax, xMax) : 0;
-    v.y = yMax > yMin ? THREE.MathUtils.clamp(v.y, yMin, yMax) : yMin;
-    return v;
+  // Furniture silhouettes projected onto the wall plane: posters may not overlap these.
+  const obstacles = [];
+  const box = new THREE.Box3();
+  const meshBox = new THREE.Box3();
+  const corner = new THREE.Vector3();
+  function computeObstacles() {
+    obstacles.length = 0;
+    for (const obj of [shelf.group, turntable.group, lamp.group, basket.group]) {
+      box.makeEmpty();
+      obj.updateWorldMatrix(true, true);
+      obj.traverse(o => {
+        if (o.isMesh && !o.userData.noBounds) box.union(meshBox.setFromObject(o));
+      });
+      const r = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+      for (let i = 0; i < 8; i++) {
+        corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+        const s = view.d / (view.d - corner.z);
+        const x = view.cx + (corner.x - view.cx) * s;
+        const y = view.cy + (corner.y - view.cy) * s;
+        r.minX = Math.min(r.minX, x); r.maxX = Math.max(r.maxX, x);
+        r.minY = Math.min(r.minY, y); r.maxY = Math.max(r.maxY, y);
+      }
+      obstacles.push(r);
+    }
+  }
+
+  function viewBounds() {
+    const m = PLACE_MARGIN;
+    return {
+      minX: view.cx - view.halfW + POSTER_W / 2 + m,
+      maxX: view.cx + view.halfW - POSTER_W / 2 - m,
+      minY: Math.max(view.bottom, 0) + POSTER_H / 2 + m,
+      maxY: view.cy + view.halfH - POSTER_H / 2 - m,
+    };
+  }
+
+  function clampToView(v, b) {
+    v.x = b.maxX > b.minX ? THREE.MathUtils.clamp(v.x, b.minX, b.maxX) : view.cx;
+    v.y = b.maxY > b.minY ? THREE.MathUtils.clamp(v.y, b.minY, b.maxY) : b.minY;
+  }
+
+  function placeTarget(v) {
+    const b = viewBounds();
+    clampToView(v, b);
+    const hw = POSTER_W / 2 + PLACE_MARGIN;
+    const hh = POSTER_H / 2 + PLACE_MARGIN;
+    for (let iter = 0; iter < 6; iter++) {
+      let moved = false;
+      for (const o of obstacles) {
+        const ox = Math.min(v.x + hw, o.maxX) - Math.max(v.x - hw, o.minX);
+        const oy = Math.min(v.y + hh, o.maxY) - Math.max(v.y - hh, o.minY);
+        if (ox <= 0 || oy <= 0) continue;
+        // Slide out the cheapest way: up, or sideways if that stays on screen.
+        const opts = [{ dx: 0, dy: o.maxY - (v.y - hh) }];
+        const left = (v.x + hw) - o.minX;
+        const right = o.maxX - (v.x - hw);
+        if (v.x - left >= b.minX) opts.push({ dx: -left, dy: 0 });
+        if (v.x + right <= b.maxX) opts.push({ dx: right, dy: 0 });
+        opts.sort((a, c) => Math.abs(a.dx) + a.dy - (Math.abs(c.dx) + c.dy));
+        v.x += opts[0].dx;
+        v.y += opts[0].dy;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    v.y = Math.min(v.y, Math.max(b.maxY, b.minY));
   }
 
   function updateTarget() {
     raycaster.setFromCamera(ndc, camera);
     const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -holdZ);
     if (raycaster.ray.intersectPlane(plane, tmp)) {
-      target.set(tmp.x, tmp.y, 0);
-      clampToWall(target);
+      // Map the hover-plane hit back onto the wall so the poster sits under the cursor.
+      const s = view.d / (view.d - holdZ);
+      target.set(view.cx + (tmp.x - view.cx) * s, view.cy + (tmp.y - view.cy) * s, 0);
+      placeTarget(target);
     }
   }
 
@@ -355,7 +453,7 @@ async function init() {
     await animate(0.5, e => g.position.lerpVectors(start, up, e), ease.outCubic);
 
     // Bring it up to the viewer, roll facing forward
-    const pres = new THREE.Vector3(0, view.lookY + 0.04, camera.position.z - 2.15);
+    const pres = new THREE.Vector3(view.cx, view.cy - 0.02, camera.position.z - 1.95);
     await flyTo(p, pres, new THREE.Quaternion(), 0.75, 0.25);
 
     // Snap the band off, then unroll: the print is revealed as the roll travels across
@@ -411,19 +509,13 @@ async function init() {
       p.curl = c0 * (1 - e);
       p.update();
     }, ease.inCubic);
-    p.wallZ = z1;
     p.curl = 0;
     p.wave = 1;
     p.update();
-    animate(0.25, e => {
+    await animate(0.28, e => {
       const s = 1 + Math.sin(e * Math.PI) * 0.016;
       p.lift.scale.set(s, s, 1);
     }, ease.linear);
-    p.setTapes(true);
-    for (const t of p.tapes) {
-      animate(0.32, e => t.scale.setScalar(Math.max(0, ease.outBack(e))), ease.linear);
-      await sleep(0.07);
-    }
     p.state = 'wall';
     busy = false;
     refreshUI();
@@ -460,11 +552,6 @@ async function init() {
     p.state = 'peeling';
     setHint('Peeling…');
     hovered = null;
-    p.tapes.forEach((t, i) => {
-      sleep(i * 0.05).then(() => animate(0.16, e => t.scale.setScalar(1 - e), ease.inCubic));
-    });
-    await sleep(0.32);
-    p.setTapes(false);
     const g = p.group;
     const z0 = g.position.z;
     const rz0 = g.rotation.z;
@@ -507,7 +594,6 @@ async function init() {
 
   function refreshUI() {
     const n = posters.filter(p => p.state === 'wall').length;
-    countEl.textContent = `${String(n).padStart(2, '0')} / ${String(POSTER_COUNT).padStart(2, '0')}`;
     if (held) return;
     setHint(n === 0 ? 'Pick a rolled poster from the basket' : 'Pick another  ·  click a poster on the wall to peel it off');
   }
@@ -568,6 +654,7 @@ async function init() {
     renderer.getSize(size);
     if (!w || !h || (size.x === w && size.y === h)) return;
     frameCamera();
+    computeObstacles();
     renderer.setSize(w, h);
     composer.setSize(w, h);
     grade.uniforms.uRes.value.set(w, h);
@@ -585,9 +672,9 @@ async function init() {
 
     turntable.vinyl.rotation.y -= dt * 3.49; // 33⅓ rpm
     const flicker = 1 + Math.sin(t * 2.1) * 0.03 + Math.sin(t * 7.3) * 0.015;
-    lamp.light.intensity = 1.3 * flicker;
-    wash.intensity = 0.75 * flicker;
-    lamp.hot.emissiveIntensity = 9 * flicker;
+    lamp.light.intensity = 0.75 * flicker;
+    wash.intensity = 0.45 * flicker;
+    lamp.hot.emissiveIntensity = 5 * flicker;
 
     if (held && held.state === 'held') {
       const g = held.group;
@@ -607,14 +694,18 @@ async function init() {
       held.lift.position.y = Math.sin(t * 1.7) * 0.004;
     }
 
+    const hk = 1 - Math.exp(-dt * 12);
     for (const p of posters) {
+      const isHover = p === hovered && !busy && !held;
       if (p.state === 'basket') {
-        const ty = p === hovered ? 0.07 : 0;
-        p.lift.position.y += (ty - p.lift.position.y) * (1 - Math.exp(-dt * 12));
+        const ty = isHover ? 0.1 : 0;
+        p.lift.position.y += (ty - p.lift.position.y) * hk;
       } else if (p.state === 'wall') {
-        const tz = p === hovered ? 0.012 : 0;
-        p.lift.position.z += (tz - p.lift.position.z) * (1 - Math.exp(-dt * 12));
+        const tz = isHover ? 0.012 : 0;
+        p.lift.position.z += (tz - p.lift.position.z) * hk;
       }
+      p.glow += ((isHover ? 1 : 0) - p.glow) * hk;
+      p.material.emissiveIntensity = p.glow * 0.32;
     }
 
     grade.uniforms.uTime.value = t;
@@ -622,6 +713,7 @@ async function init() {
     requestAnimationFrame(tick);
   }
 
+  computeObstacles();
   refreshUI();
   requestAnimationFrame(tick);
   loaderEl.classList.add('done');

@@ -24,6 +24,7 @@ export function contactShadow(w, d, opacity = 0.55) {
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.002;
   m.renderOrder = 1;
+  m.userData.noBounds = true;
   return m;
 }
 
@@ -222,20 +223,37 @@ export function makeTurntable() {
     depthWrite: false,
   });
   const lid = new THREE.Group();
-  const LW = PW + 0.004, LD = PD + 0.004, LH = 0.075, LT = 0.004;
+  const LW = PW + 0.004, LD = PD + 0.004, LH = 0.06, LT = 0.004;
   const lidPanel = (w, h, d, x, y, z) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lidMat);
     m.position.set(x, y, z);
     lid.add(m);
   };
-  // Hinge sits on the lid's top back edge, so the skirt swings forward when opened
+  // Pivot on the lid's top back edge so the skirt swings forward, away from the wall
   lidPanel(LW, LT, LD, 0, 0, LD / 2);
   lidPanel(LW, LH, LT, 0, -LH / 2, LD);
   lidPanel(LT, LH, LD, -LW / 2, -LH / 2, LD / 2);
   lidPanel(LT, LH, LD, LW / 2, -LH / 2, LD / 2);
-  lid.position.set(0, top + LH, -PD / 2 + 0.002);
+  const PIVOT_Y = top + 0.03;
+  const PIVOT_Z = -PD / 2 - 0.008;
+  lid.position.set(0, PIVOT_Y, PIVOT_Z);
   lid.rotation.x = -1.42;
   g.add(lid);
+
+  // Hinge brackets bolted to the plinth's back, carrying the lid pivot
+  for (const s of [-1, 1]) {
+    const x = s * (PW / 2 - 0.07);
+    const bracket = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.055, 0.014, 2, 0.003), plinthMat);
+    bracket.position.set(x, PIVOT_Y - 0.018, PIVOT_Z + 0.001);
+    g.add(bracket);
+    const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(0.0065, 0.0065, 0.034, 16), chrome);
+    knuckle.rotation.z = Math.PI / 2;
+    knuckle.position.set(x, PIVOT_Y, PIVOT_Z);
+    g.add(knuckle);
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.004, 0.04), plinthMat);
+    leaf.position.set(x, 0, 0.02);
+    lid.add(leaf);
+  }
 
   shadowOn(g);
   lid.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
@@ -258,7 +276,7 @@ export function makeGlassLamp() {
     attenuationColor: new THREE.Color(0xff9a62),
     attenuationDistance: 0.25,
     emissive: new THREE.Color(0xff5a1c),
-    emissiveIntensity: 0.35,
+    emissiveIntensity: 0.18,
     specularIntensity: 1,
   });
   const base = new THREE.Mesh(new RoundedBoxGeometry(S * 0.86, 0.012, S * 0.86, 2, 0.003), powder);
@@ -285,7 +303,7 @@ export function makeGlassLamp() {
   g.add(filament2);
   const core = new THREE.Mesh(
     new THREE.BoxGeometry(S * 0.32, H * 0.5, S * 0.32),
-    new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff7b33, emissiveIntensity: 2.4 }),
+    new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff7b33, emissiveIntensity: 1.3 }),
   );
   core.position.y = H * 0.52;
   g.add(core);
@@ -346,19 +364,19 @@ export function makeBasket() {
   shadowOn(g);
   g.add(contactShadow(0.62, 0.62, 0.7));
 
-  // Slot layout for rolled posters: loose ring, each leaning outward a little.
+  // Rolls fan out like a bouquet: feet clustered, each resting against the rim at a
+  // different point so the tops spread evenly and every roll stays clear to pick.
   const slots = [];
   const N = 8;
+  const RIM_Y = 0.41;
   for (let i = 0; i < N; i++) {
-    const a = i * 2.399963 + 0.4; // golden angle
-    const r = 0.025 + 0.085 * Math.sqrt((i + 0.5) / N);
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r;
-    const lean = 0.05 + r * 0.95;
-    const axis = new THREE.Vector3(z, 0, -x).normalize();
-    const q = new THREE.Quaternion().setFromAxisAngle(axis, lean);
-    q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a * 3.1));
-    slots.push({ pos: new THREE.Vector3(x, 0, z), quat: q });
+    const xr = -0.165 + (0.33 * i) / (N - 1); // where the roll crosses the rim
+    const x0 = xr * 0.35;
+    const z = i % 2 === 0 ? -0.055 : 0.055;
+    const lean = Math.atan((xr - x0) / RIM_Y);
+    const tilt = z < 0 ? -0.07 : 0.05;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, 0, -lean, 'XYZ'));
+    slots.push({ pos: new THREE.Vector3(x0, 0, z), quat: q });
   }
-  return { group: g, slots, rimY: 0.41 };
+  return { group: g, slots, rimY: RIM_Y };
 }
