@@ -1,6 +1,6 @@
 # Poster Wall
 
-A small Three.js room: a blank cool-white wall, a modular steel shelf with a turntable and a glass-block lamp, and a seagrass basket of rolled-up posters. Pull a poster out, watch it unroll, then tape it anywhere on the wall.
+A small Three.js room: a blank cool-white wall, a modular steel shelf with a turntable and a glass-block lamp, and a seagrass basket of rolled-up posters. Pull a poster out, watch it unroll, then stick it anywhere on the open wall.
 
 ## Interaction
 
