@@ -327,10 +327,11 @@ export function makeGlassLamp() {
 export function makeBasket() {
   const g = new THREE.Group();
   const { map, bump } = makeWeave();
+  const R = 0.8; // radius scale
   const pts = [
     [0.0, 0.0], [0.15, 0.0], [0.168, 0.008], [0.186, 0.05], [0.203, 0.14],
     [0.212, 0.24], [0.21, 0.33], [0.204, 0.41],
-  ].map(([r, y]) => new THREE.Vector2(r, y));
+  ].map(([r, y]) => new THREE.Vector2(r * R, y));
   const outer = new THREE.Mesh(
     new THREE.LatheGeometry(pts, 96),
     new THREE.MeshStandardMaterial({ map, bumpMap: bump, bumpScale: 3, roughness: 0.92, side: THREE.FrontSide }),
@@ -348,7 +349,7 @@ export function makeBasket() {
   const ropeMat = new THREE.MeshStandardMaterial({ map: map.clone(), bumpMap: bump, bumpScale: 4, roughness: 0.9 });
   ropeMat.map.repeat.set(10, 0.25);
   ropeMat.map.needsUpdate = true;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.204, 0.013, 14, 96), ropeMat);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.204 * R, 0.013, 14, 96), ropeMat);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.41;
   g.add(rim);
@@ -356,25 +357,28 @@ export function makeBasket() {
   // Rope handles
   for (const s of [-1, 1]) {
     const h = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.008, 10, 32, Math.PI), ropeMat);
-    h.position.set(s * 0.205, 0.36, 0);
+    h.position.set(s * 0.205 * R, 0.36, 0);
     h.rotation.y = Math.PI / 2;
     g.add(h);
   }
 
   shadowOn(g);
-  g.add(contactShadow(0.62, 0.62, 0.7));
+  g.add(contactShadow(0.52, 0.52, 0.7));
 
-  // Rolls fan out like a bouquet: feet clustered, each resting against the rim at a
-  // different point so the tops spread evenly and every roll stays clear to pick.
+  // Rolls stand in a gentle fan: each top gets its own lane just wider than a roll,
+  // feet stay clustered, so they read as separate without splaying out.
   const slots = [];
   const N = 8;
   const RIM_Y = 0.41;
+  const ROLL_LEN = 0.958;
+  const LANE = 0.074;
   for (let i = 0; i < N; i++) {
-    const xr = -0.165 + (0.33 * i) / (N - 1); // where the roll crosses the rim
-    const x0 = xr * 0.35;
-    const z = i % 2 === 0 ? -0.055 : 0.055;
-    const lean = Math.atan((xr - x0) / RIM_Y);
-    const tilt = z < 0 ? -0.07 : 0.05;
+    const xTop = (i - (N - 1) / 2) * LANE;
+    const x0 = xTop * 0.2;
+    const z = i % 2 === 0 ? -0.03 : 0.03;
+    const lean = Math.atan((xTop - x0) / ROLL_LEN);
+    // Lean front/back so every top lands in the same plane: no perspective slide between rows.
+    const tilt = Math.atan(-z / ROLL_LEN);
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, 0, -lean, 'XYZ'));
     slots.push({ pos: new THREE.Vector3(x0, 0, z), quat: q });
   }

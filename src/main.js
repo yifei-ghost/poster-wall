@@ -23,6 +23,8 @@ const MOBILE_ASPECT = 0.9;
 const MOBILE_HALF_W = 1.0;
 const MOBILE_RIGHT = 1.5;
 const MOBILE_BOTTOM = 0.34;
+const BASKET_X_DESKTOP = 1.36;
+const BASKET_X_MOBILE = 1.08;
 const PLACE_MARGIN = 0.05;
 
 const loaderEl = document.getElementById('loader');
@@ -103,6 +105,7 @@ async function init() {
     }
     const halfH = view.halfH;
     view.bottom = view.cy - halfH;
+    view.mobile = aspect < MOBILE_ASPECT;
     view.d = halfH / t;
     camera.aspect = aspect;
     camera.position.set(view.cx, view.cy, view.d);
@@ -172,6 +175,9 @@ async function init() {
 
   const basket = makeBasket();
   basket.group.position.set(1.08, 0, 0.36);
+  // Desktop has room to spread out; on mobile the basket stays tucked beside the shelf.
+  const applyLayout = () => { basket.group.position.x = view.mobile ? BASKET_X_MOBILE : BASKET_X_DESKTOP; };
+  applyLayout();
   scene.add(basket.group);
 
   // --- Lighting ----------------------------------------------------------
@@ -355,26 +361,39 @@ async function init() {
   const box = new THREE.Box3();
   const meshBox = new THREE.Box3();
   const corner = new THREE.Vector3();
+  // Bounds of an object's meshes projected onto the wall plane from the camera.
+  function projectedRect(obj) {
+    box.makeEmpty();
+    obj.updateWorldMatrix(true, true);
+    obj.traverse(o => {
+      if (o.isMesh && !o.userData.noBounds) box.union(meshBox.setFromObject(o));
+    });
+    const r = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    for (let i = 0; i < 8; i++) {
+      corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      const s = view.d / (view.d - corner.z);
+      const x = view.cx + (corner.x - view.cx) * s;
+      const y = view.cy + (corner.y - view.cy) * s;
+      r.minX = Math.min(r.minX, x); r.maxX = Math.max(r.maxX, x);
+      r.minY = Math.min(r.minY, y); r.maxY = Math.max(r.maxY, y);
+    }
+    return r;
+  }
+
+  // On desktop, pull the basket in only as far as needed to keep every roll on screen.
+  function fitBasket() {
+    applyLayout();
+    if (view.mobile) return;
+    const limit = view.cx + view.halfW - 0.08;
+    const over = projectedRect(basket.group).maxX - limit;
+    if (over > 0) basket.group.position.x -= over / (view.d / (view.d - 0.36));
+  }
+
   function computeObstacles() {
     obstacles.length = 0;
-    for (const obj of [shelf.group, turntable.group, lamp.group, basket.group]) {
-      box.makeEmpty();
-      obj.updateWorldMatrix(true, true);
-      obj.traverse(o => {
-        if (o.isMesh && !o.userData.noBounds) box.union(meshBox.setFromObject(o));
-      });
-      const r = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
-      for (let i = 0; i < 8; i++) {
-        corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
-        const s = view.d / (view.d - corner.z);
-        const x = view.cx + (corner.x - view.cx) * s;
-        const y = view.cy + (corner.y - view.cy) * s;
-        r.minX = Math.min(r.minX, x); r.maxX = Math.max(r.maxX, x);
-        r.minY = Math.min(r.minY, y); r.maxY = Math.max(r.maxY, y);
-      }
-      obstacles.push(r);
-    }
+    for (const obj of [shelf.group, turntable.group, lamp.group, basket.group]) obstacles.push(projectedRect(obj));
   }
+
 
   function viewBounds() {
     const m = PLACE_MARGIN;
@@ -674,6 +693,7 @@ async function init() {
     renderer.getSize(size);
     if (!w || !h || (size.x === w && size.y === h)) return;
     frameCamera();
+    fitBasket();
     computeObstacles();
     renderer.setSize(w, h);
     composer.setSize(w, h);
@@ -733,6 +753,7 @@ async function init() {
     requestAnimationFrame(tick);
   }
 
+  fitBasket();
   computeObstacles();
   refreshUI();
   requestAnimationFrame(tick);
