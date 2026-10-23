@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { makeWeave, makeVinylTop, makeContactShadow } from './textures.js';
+import { makeWeave, makeVinylTop, makeContactShadow, mulberry32 } from './textures.js';
 
 const chrome = new THREE.MeshStandardMaterial({ color: 0xe9edf3, metalness: 1, roughness: 0.14 });
 const powder = new THREE.MeshStandardMaterial({ color: 0x17181b, metalness: 0.25, roughness: 0.5 });
@@ -365,22 +365,24 @@ export function makeBasket() {
   shadowOn(g);
   g.add(contactShadow(0.52, 0.52, 0.7));
 
-  // Rolls stand in a gentle fan: each top gets its own lane just wider than a roll,
-  // feet stay clustered, so they read as separate without splaying out.
+  // Rolls stand in a loose fan: each top roughly has its own lane, with a little seeded
+  // jitter in lean, depth, height and spin so it reads as a real, casually filled basket.
   const slots = [];
   const N = 8;
   const RIM_Y = 0.41;
   const ROLL_LEN = 0.958;
-  const LANE = 0.074;
+  const LANE = 0.072;
+  const rnd = mulberry32(21);
   for (let i = 0; i < N; i++) {
-    const xTop = (i - (N - 1) / 2) * LANE;
-    const x0 = xTop * 0.2;
-    const z = i % 2 === 0 ? -0.03 : 0.03;
+    const xTop = (i - (N - 1) / 2) * LANE + (rnd() - 0.5) * 0.026;
+    const x0 = xTop * 0.2 + (rnd() - 0.5) * 0.02;
+    const z = (i % 2 === 0 ? -1 : 1) * (0.012 + rnd() * 0.035);
+    const y = rnd() * 0.07; // some rolls rest on others' ends
     const lean = Math.atan((xTop - x0) / ROLL_LEN);
-    // Lean front/back so every top lands in the same plane: no perspective slide between rows.
-    const tilt = Math.atan(-z / ROLL_LEN);
+    const tilt = Math.atan((-z * 0.6) / ROLL_LEN) + (rnd() - 0.5) * 0.03;
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, 0, -lean, 'XYZ'));
-    slots.push({ pos: new THREE.Vector3(x0, 0, z), quat: q });
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (rnd() - 0.5) * 1.6));
+    slots.push({ pos: new THREE.Vector3(x0, y, z), quat: q });
   }
   return { group: g, slots, rimY: RIM_Y };
 }
