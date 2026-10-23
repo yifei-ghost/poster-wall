@@ -7,7 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { makePlaster, makeFloorboards, makePaperGrain, makeWindowCookie, makeLinearShadow } from './textures.js';
-import { makeShelf, makeTurntable, makeGlassLamp, makeBasket } from './props.js';
+import { makeShelf, makeTurntable, makeGlassLamp, makeBasket, makeNamePlate } from './props.js';
 import { Poster, POSTER_W, POSTER_H } from './poster.js';
 
 const POSTER_COUNT = 8;
@@ -172,6 +172,11 @@ async function init() {
   lamp.group.position.set(-0.08, shelf.topY, 0.16);
   lamp.group.rotation.y = 0.12;
   scene.add(lamp.group);
+
+  const plate = await makeNamePlate(scene.environment);
+  plate.group.position.set(0.17, shelf.topY, 0.31);
+  plate.group.rotation.y = 0.22;
+  scene.add(plate.group);
 
   const basket = makeBasket();
   basket.group.position.set(1.08, 0, 0.36);
@@ -391,7 +396,7 @@ async function init() {
 
   function computeObstacles() {
     obstacles.length = 0;
-    for (const obj of [shelf.group, turntable.group, lamp.group, basket.group]) obstacles.push(projectedRect(obj));
+    for (const obj of [shelf.group, turntable.group, lamp.group, plate.group, basket.group]) obstacles.push(projectedRect(obj));
   }
 
 
@@ -493,7 +498,8 @@ async function init() {
     // Snap the band off, then unroll: the print is revealed as the roll travels across
     await animate(0.22, (e) => {
       p.band.position.y = POSTER_H * 0.22 + e * 0.12;
-      p.band.scale.z = 1 - e;
+      // Never scale to exactly 0: a singular normal matrix gives NaN pixels that bloom smears across the frame.
+      p.band.scale.z = Math.max(0.02, 1 - e);
       p.band.material.opacity = 1 - e;
     }, ease.inCubic);
     p.band.visible = false;

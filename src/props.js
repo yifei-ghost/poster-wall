@@ -386,3 +386,141 @@ export function makeBasket() {
   }
   return { group: g, slots, rimY: RIM_Y };
 }
+
+// --- Brushed steel name plate with a debossed wordmark -------------------
+
+function brushedRoughness(w, h, base, spread) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d');
+  const v = Math.round(base * 255);
+  ctx.fillStyle = `rgb(${v},${v},${v})`;
+  ctx.fillRect(0, 0, w, h);
+  const rnd = mulberry32(404);
+  for (let i = 0; i < h * 3; i++) {
+    const g = Math.round((base + (rnd() - 0.5) * spread) * 255);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.5)`;
+    ctx.fillRect(0, rnd() * h, w, 0.6 + rnd() * 1.2);
+  }
+  return c;
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+export async function makeNamePlate(envMap) {
+  const g = new THREE.Group();
+  const W = 0.2; // plate width
+  const H = 0.098; // ~2/3 of the lamp's height
+  const T = 0.003; // sheet thickness
+  const LEAN = 0.17; // radians back from vertical
+  const FOOT = 0.065;
+
+  const steel = (extra = {}) => new THREE.MeshPhysicalMaterial({
+    color: 0xaab0b8,
+    metalness: 1,
+    roughness: 1,
+    anisotropy: 0.65,
+    envMap,
+    envMapIntensity: 0.6,
+    ...extra,
+  });
+
+  // Side profile of the bent sheet: foot along the shelf, face leaning back over it.
+  const d = new THREE.Vector2(Math.sin(LEAN), Math.cos(LEAN)); // face direction (back, up)
+  const nF = new THREE.Vector2(-d.y, d.x); // face front normal (toward viewer)
+  const P1 = new THREE.Vector2(0, T / 2);
+  const faceLen = H / Math.cos(LEAN);
+  const P2 = P1.clone().addScaledVector(d, faceLen);
+  const lineY = (p0, dir, y) => p0.clone().addScaledVector(dir, (y - p0.y) / dir.y);
+  const A = lineY(P1.clone().addScaledVector(nF, T / 2), d, 0);
+  const B = lineY(P1.clone().addScaledVector(nF, -T / 2), d, T);
+  const shape = new THREE.Shape();
+  shape.moveTo(FOOT, 0);
+  shape.lineTo(A.x, A.y);
+  const topF = P2.clone().addScaledVector(nF, T / 2);
+  const topB = P2.clone().addScaledVector(nF, -T / 2);
+  shape.lineTo(topF.x, topF.y);
+  shape.lineTo(topB.x, topB.y);
+  shape.lineTo(B.x, B.y);
+  shape.lineTo(FOOT, T);
+  shape.closePath();
+
+  const bodyRough = new THREE.CanvasTexture(brushedRoughness(256, 256, 0.3, 0.28));
+  const body = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(shape, { depth: W, bevelEnabled: true, bevelThickness: 0.0005, bevelSize: 0.0005, bevelSegments: 2 }),
+    steel({ roughnessMap: bodyRough }),
+  );
+  // Shape X runs back into the scene, Y up, extrusion along world X.
+  body.geometry.rotateY(Math.PI / 2);
+  body.geometry.translate(-W / 2, 0, 0);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  g.add(body);
+
+  // Face panel carrying the deboss, laid exactly on the front face.
+  const CW = 1024, CH = Math.round(CW * (faceLen / W));
+  const svg = await loadImage('./ghost-wordmark.svg');
+  const markW = CW * 0.62;
+  const markH = markW * (svg.height / svg.width || 320 / 866);
+  const mx = (CW - markW) / 2, my = (CH - markH) / 2;
+
+  const height = document.createElement('canvas');
+  height.width = CW; height.height = CH;
+  let ctx = height.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, CW, CH);
+  ctx.filter = 'blur(2.5px)';
+  ctx.drawImage(svg, mx, my, markW, markH);
+
+  const rough = brushedRoughness(CW, CH, 0.3, 0.28);
+  ctx = rough.getContext('2d');
+  ctx.globalCompositeOperation = 'source-over';
+  const ink = document.createElement('canvas');
+  ink.width = CW; ink.height = CH;
+  const ictx = ink.getContext('2d');
+  ictx.drawImage(svg, mx, my, markW, markH);
+  ictx.globalCompositeOperation = 'source-in';
+  ictx.fillStyle = 'rgb(170,170,170)'; // bead-blasted recess is rougher
+  ictx.fillRect(0, 0, CW, CH);
+  ctx.drawImage(ink, 0, 0);
+
+  const tint = document.createElement('canvas');
+  tint.width = CW; tint.height = CH;
+  ctx = tint.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, CW, CH);
+  ctx.filter = 'blur(1.5px)';
+  ictx.globalCompositeOperation = 'source-in';
+  ictx.fillStyle = 'rgb(150,153,158)';
+  ictx.fillRect(0, 0, CW, CH);
+  ctx.drawImage(ink, 0, 0);
+
+  const mk = (c, srgb) => {
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.anisotropy = 8;
+    return t;
+  };
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(W - 0.002, faceLen - 0.002),
+    steel({ map: mk(tint, true), roughnessMap: mk(rough, false), bumpMap: mk(height, false), bumpScale: 7, polygonOffset: true, polygonOffsetFactor: -2 }),
+  );
+  const mid = P1.clone().addScaledVector(d, faceLen / 2).addScaledVector(nF, T / 2 + 0.0004);
+  // Map profile coords back to world: profile X is depth into the scene (-z).
+  face.position.set(0, mid.y, -mid.x);
+  face.rotation.x = -LEAN;
+  face.receiveShadow = true;
+  g.add(face);
+
+  g.add(contactShadow(W + 0.06, FOOT + 0.06, 0.45));
+  g.children[g.children.length - 1].position.z = -FOOT / 2;
+  return { group: g, height: H };
+}
