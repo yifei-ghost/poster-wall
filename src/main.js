@@ -11,7 +11,7 @@ import { makeShelf, makeTurntable, makeGlassLamp, makeBasket, makeNamePlate, ref
 import { Poster, POSTER_W, POSTER_H } from './poster.js';
 
 const POSTER_COUNT = 8;
-const HOVER_Z = 0.16;
+const HOVER_Z = 0.08;
 const FOV = 34;
 // Framing, measured on the wall plane: crop just above the shelf's lower tier, lots of wall above.
 const VIEW_BOTTOM = 0.42;
@@ -553,9 +553,14 @@ async function init() {
       : 'Move to place  ·  click to stick  ·  esc to put back');
     // Input is live during the glide so an early tap or drag isn't swallowed.
     busy = false;
+    const c0 = p.curl;
     await animate(0.8, e => {
       holdZ = THREE.MathUtils.lerp(z0, HOVER_Z, e);
-      if (p.state === 'held') g.rotation.y = r0.y * (1 - e);
+      if (p.state !== 'held') return;
+      g.rotation.y = r0.y * (1 - e);
+      // The paper relaxes flat as it's carried in, so no edge can bend into the wall.
+      p.curl = c0 * (1 - e);
+      p.update();
     }, ease.inOutCubic);
   }
 
@@ -567,26 +572,22 @@ async function init() {
     const z0 = g.position.z;
     stackOrder += 1;
     const z1 = 0.0035 + Math.min(stackOrder, 40) * 0.0011;
-    const rz0 = g.rotation.z, rz1 = (Math.random() - 0.5) * 0.02;
+    const rz0 = g.rotation.z, rz1 = (Math.random() - 0.5) * 0.012;
     const rx0 = g.rotation.x;
-    const c0 = Math.max(p.curl, 0.6);
-    // Ease onto the wall, decelerating, with the paper still slightly bowed at contact...
-    await animate(0.42, e => {
+    const c0 = p.curl;
+    // Move straight back onto the wall, settling square as it goes...
+    await animate(0.3, e => {
       g.position.z = THREE.MathUtils.lerp(z0, z1, e);
       g.rotation.z = THREE.MathUtils.lerp(rz0, rz1, e);
       g.rotation.x = THREE.MathUtils.lerp(rx0, 0, e);
-      p.curl = THREE.MathUtils.lerp(c0, 0.45, e);
-      p.update();
-    }, ease.outCubic);
-    // ...then press it flat, smoothing out from the middle like a hand pressing it on.
-    await animate(0.5, e => {
-      p.curl = 0.45 * (1 - e);
-      p.wave = 0.35 * e;
-      p.update();
+      if (c0 > 0) { p.curl = c0 * (1 - e); p.update(); }
     }, ease.outCubic);
     p.curl = 0;
-    p.wave = 0.35;
-    p.update();
+    // ...then a soft press: the sheet takes on the faint unevenness of paper on plaster.
+    await animate(0.3, e => {
+      p.wave = 0.3 * e;
+      p.update();
+    }, ease.outCubic);
     p.state = 'wall';
     captureReflections();
     busy = false;
@@ -764,8 +765,8 @@ async function init() {
       }
       heldPrev.set(g.position.x, g.position.y);
       const sway = 1 - Math.exp(-dt * 7);
-      const rzT = THREE.MathUtils.clamp(-heldVel.x * 0.07, -0.14, 0.14);
-      const rxT = THREE.MathUtils.clamp(heldVel.y * 0.05, -0.1, 0.1);
+      const rzT = THREE.MathUtils.clamp(-heldVel.x * 0.035, -0.07, 0.07);
+      const rxT = THREE.MathUtils.clamp(heldVel.y * 0.02, -0.04, 0.04);
       g.rotation.z += (rzT - g.rotation.z) * sway;
       g.rotation.x += (rxT - g.rotation.x) * sway;
       held.lift.position.y = Math.sin(t * 1.7) * 0.004;
