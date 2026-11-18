@@ -21,7 +21,7 @@ npm run dev
 
 - `src/poster.js`: each poster is one 240×18 segment plane, deformed on the CPU into an Archimedean spiral. One parameter (unrolled length) drives everything from a tight roll to a flat sheet. The front shows the print and the back shows the paper stock, with print show-through.
 - `src/textures.js`: all procedural textures: tileable value-noise plaster, worn pine floorboards (color/bump/roughness), twined seagrass weave, retro print treatment (paper multiply, plate misregistration, halftone screen, grain, ink drop-outs, edge wear), vinyl grooves, window light cookie.
-- `src/props.js`: steel shelf with chrome tubes and ball connectors, turntable with smoked acrylic lid and spinning record, transmissive glass-block lamp with a shadow-casting point light, lathe-turned basket.
+- `src/props.js`: glass case in a chrome frame (glass shelves and sides, reflections captured from the room with a cube camera), brushed-steel name plate with a debossed wordmark, turntable with smoked acrylic lid and spinning record, transmissive glass-block lamp with a shadow-casting point light, lathe-turned basket.
 - `src/main.js`: lighting (cool window spotlight with a mullion cookie, hemisphere fill, warm lamp + wash), post-processing (bloom, split-tone grade, vignette, grain, mild lens fringing), and the take-out / stick / peel state machine.
 
 Poster artwork: 8 frames exported from the Figma file into `public/posters/`.

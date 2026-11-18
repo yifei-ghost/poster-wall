@@ -4,6 +4,8 @@ import { makeWeave, makeVinylTop, makeContactShadow, mulberry32 } from './textur
 
 const chrome = new THREE.MeshStandardMaterial({ color: 0xe9edf3, metalness: 1, roughness: 0.14 });
 const powder = new THREE.MeshStandardMaterial({ color: 0x17181b, metalness: 0.25, roughness: 0.5 });
+// Materials that should mirror the actual room; main.js assigns them a captured reflection map.
+export const reflective = [chrome];
 const contactTex = makeContactShadow();
 
 function shadowOn(obj, cast = true, receive = true) {
@@ -55,6 +57,19 @@ export function makeShelf() {
     g.add(m);
   };
 
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0xf2f6fa,
+    metalness: 0,
+    roughness: 0.03,
+    transmission: 1,
+    thickness: 0.006,
+    ior: 1.5,
+    specularIntensity: 1,
+    attenuationColor: new THREE.Color(0xa9c0d2),
+    attenuationDistance: 0.4,
+  });
+  reflective.push(glass);
+
   const xs = Array.from({ length: BAYS + 1 }, (_, i) => x0 + i * BAY);
   for (const y of LEVELS) {
     tube(new THREE.Vector3(x0, y, zf), new THREE.Vector3(x1, y, zf));
@@ -71,39 +86,33 @@ export function makeShelf() {
   // Glides
   const glide = new THREE.CylinderGeometry(0.012, 0.016, LEVELS[0] - 0.012, 16);
   for (const x of xs) for (const z of [zf, zb]) {
-    const m = new THREE.Mesh(glide, powder);
+    const m = new THREE.Mesh(glide, chrome);
     m.position.set(x, (LEVELS[0] - 0.012) / 2, z);
     g.add(m);
   }
 
-  const panel = (w, h, d, x, y, z) => {
-    const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, 0.003), powder);
+  const panel = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(0.003, d / 2.5)), mat);
     m.position.set(x, y, z);
     g.add(m);
     return m;
   };
   const inset = 0.012;
   const T = 0.01;
-  // Horizontal panels
-  for (const y of LEVELS) panel(W - inset * 2, T, D - inset * 2, 0, y, 0);
-  // Back + side panels
+  const GT = 0.006;
+  // A glass case in a chrome frame: glass shelves, and glass on every side including the front
+  const glassPanels = [];
+  for (const y of LEVELS) glassPanels.push(panel(W - inset * 2, T, D - inset * 2, 0, y, 0, glass));
   for (let l = 0; l < 2; l++) {
     const yA = LEVELS[l], yB = LEVELS[l + 1];
     const h = yB - yA - inset * 2;
     const ym = (yA + yB) / 2;
-    panel(W - inset * 2, h, T, 0, ym, zb + inset);
-    panel(T, h, D - inset * 2, x0 + inset, ym, 0);
-    panel(T, h, D - inset * 2, x1 - inset, ym, 0);
-  }
-  // Lower doors with chrome locks
-  const yA = LEVELS[0], yB = LEVELS[1];
-  for (let b = 0; b < BAYS; b++) {
-    const cx = x0 + BAY * (b + 0.5);
-    panel(BAY - inset * 2, yB - yA - inset * 2, T, cx, (yA + yB) / 2, zf - inset);
-    const lock = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.008, 24), chrome);
-    lock.rotation.x = Math.PI / 2;
-    lock.position.set(cx, yB - 0.045, zf - inset + 0.008);
-    g.add(lock);
+    glassPanels.push(
+      panel(W - inset * 2, h, GT, 0, ym, zb + inset, glass),
+      panel(W - inset * 2, h, GT, 0, ym, zf - inset, glass),
+      panel(GT, h, D - inset * 2, x0 + inset, ym, 0, glass),
+      panel(GT, h, D - inset * 2, x1 - inset, ym, 0, glass),
+    );
   }
 
   // Books in the open upper compartment
@@ -129,6 +138,7 @@ export function makeShelf() {
   stack(x0 + BAY * 1.5 - 0.08, 3);
 
   shadowOn(g);
+  for (const m of glassPanels) m.castShadow = false;
   const shadow = contactShadow(W + 0.35, D + 0.3, 0.6);
   g.add(shadow);
   return { group: g, topY: LEVELS[2] + T / 2, width: W, depth: D };

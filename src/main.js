@@ -7,7 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { makePlaster, makeFloorboards, makePaperGrain, makeWindowCookie, makeLinearShadow } from './textures.js';
-import { makeShelf, makeTurntable, makeGlassLamp, makeBasket, makeNamePlate } from './props.js';
+import { makeShelf, makeTurntable, makeGlassLamp, makeBasket, makeNamePlate, reflective } from './props.js';
 import { Poster, POSTER_W, POSTER_H } from './poster.js';
 
 const POSTER_COUNT = 8;
@@ -394,6 +394,31 @@ async function init() {
     if (over > 0) basket.group.position.x -= over / (view.d / (view.d - 0.36));
   }
 
+  // Real reflections for the polished steel, glass and chrome: render the room from inside
+  // the shelf (with the shelf hidden), then prefilter it so rough lobes blur correctly.
+  const cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+  const cubeCam = new THREE.CubeCamera(0.02, 20, cubeRT);
+  let reflRT = null;
+  const reflectionSky = new THREE.Color(0xb7c3d6).multiplyScalar(1.6);
+  function captureReflections() {
+    cubeCam.position.set(shelf.group.position.x, 0.6, shelf.group.position.z + 0.05);
+    shelf.group.visible = false;
+    // The room has no ceiling; reflect a bright cool studio sky instead of the dark backdrop.
+    const bg = scene.background;
+    scene.background = reflectionSky;
+    cubeCam.update(renderer, scene);
+    scene.background = bg;
+    shelf.group.visible = true;
+    const next = pmrem.fromCubemap(cubeRT.texture);
+    for (const m of reflective) {
+      if (!m.envMap) m.needsUpdate = true;
+      m.envMap = next.texture;
+      m.envMapIntensity = 1;
+    }
+    if (reflRT) reflRT.dispose();
+    reflRT = next;
+  }
+
   function computeObstacles() {
     obstacles.length = 0;
     for (const obj of [shelf.group, turntable.group, lamp.group, plate.group, basket.group]) obstacles.push(projectedRect(obj));
@@ -542,24 +567,28 @@ async function init() {
     const z0 = g.position.z;
     stackOrder += 1;
     const z1 = 0.0035 + Math.min(stackOrder, 40) * 0.0011;
-    const rz0 = g.rotation.z, rz1 = (Math.random() - 0.5) * 0.045;
+    const rz0 = g.rotation.z, rz1 = (Math.random() - 0.5) * 0.02;
     const rx0 = g.rotation.x;
-    const c0 = p.curl;
-    await animate(0.24, e => {
+    const c0 = Math.max(p.curl, 0.6);
+    // Ease onto the wall, decelerating, with the paper still slightly bowed at contact...
+    await animate(0.42, e => {
       g.position.z = THREE.MathUtils.lerp(z0, z1, e);
       g.rotation.z = THREE.MathUtils.lerp(rz0, rz1, e);
       g.rotation.x = THREE.MathUtils.lerp(rx0, 0, e);
-      p.curl = c0 * (1 - e);
+      p.curl = THREE.MathUtils.lerp(c0, 0.45, e);
       p.update();
-    }, ease.inCubic);
+    }, ease.outCubic);
+    // ...then press it flat, smoothing out from the middle like a hand pressing it on.
+    await animate(0.5, e => {
+      p.curl = 0.45 * (1 - e);
+      p.wave = 0.35 * e;
+      p.update();
+    }, ease.outCubic);
     p.curl = 0;
-    p.wave = 1;
+    p.wave = 0.35;
     p.update();
-    await animate(0.28, e => {
-      const s = 1 + Math.sin(e * Math.PI) * 0.016;
-      p.lift.scale.set(s, s, 1);
-    }, ease.linear);
     p.state = 'wall';
+    captureReflections();
     busy = false;
     refreshUI();
   }
@@ -598,17 +627,19 @@ async function init() {
     const g = p.group;
     const z0 = g.position.z;
     const rz0 = g.rotation.z;
+    const w0 = p.wave;
     await animate(0.4, (e, t) => {
       g.position.z = THREE.MathUtils.lerp(z0, 0.22, e);
       g.rotation.z = rz0 * (1 - e);
       g.rotation.x = Math.sin(t * Math.PI) * -0.18;
-      p.wave = 1 - e;
+      p.wave = w0 * (1 - e);
       p.curl = e;
       p.update();
     }, ease.outCubic);
     p.lift.position.set(0, 0, 0);
     await rollUp(p);
     await returnToBasket(p);
+    captureReflections();
     busy = false;
     refreshUI();
   }
@@ -761,6 +792,7 @@ async function init() {
 
   fitBasket();
   computeObstacles();
+  captureReflections();
   refreshUI();
   requestAnimationFrame(tick);
   loaderEl.classList.add('done');
